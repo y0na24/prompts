@@ -1,0 +1,1048 @@
+# Frontend System Design: Google Calendar
+
+## 📋 Введение
+
+Добро пожаловать на урок по системному дизайну Google Calendar с фокусом на multi-user support, conflict detection и эффективную работу с событиями через Interval Tree.
+
+**Что такое Google Calendar:**
+- Создание и планирование событий
+- Приглашение пользователей
+- Множественные виды: Year, Month, Day
+- Real-time обновления
+- Конфликты событий
+
+---
+
+## 📝 План System Design
+
+1. ✅ **Общие требования**
+2. ✅ **Функциональные требования**
+3. ✅ **Layout Overview (Year, Month, Day)**
+4. ✅ **Component Architecture**
+5. ✅ **Data Model** ⭐
+6. ✅ **Interval Tree для Conflict Detection** ⭐ Ключевое!
+7. ✅ **Data Transferring (Protocol)**
+8. ✅ **Rendering Optimization**
+9. ✅ **Mobile Bridging**
+10. ✅ **Optimization & Accessibility**
+
+---
+
+## 1. 📌 Общие требования
+
+**1. Multiple Views**
+```
+✅ Year view (12 месяцев)
+✅ Month view (детальный месяц)
+✅ Day view (расписание дня)
+```
+
+**2. Multi-user Support**
+```
+✅ Create events for others
+✅ Invite users
+✅ Receive live updates
+```
+
+**3. Event Details**
+```
+✅ View event info
+✅ Rich text description
+✅ Participants list
+```
+
+**4. Conflict Detection ⭐**
+```
+Проблема: События пересекаются
+→ Event 1: 7:00-8:00
+→ Event 2: 7:30-8:30
+→ UI должен показать конфликт!
+```
+
+**5. Export/Import**
+```
+✅ .ics format support
+✅ Offline calendar integration
+```
+
+**6. PWA Mode**
+```
+✅ Works offline
+✅ Push reminders
+```
+
+---
+
+## 2. 🎯 Функциональные требования
+
+**1. Mobile First ⭐**
+```
+Основное использование: На мобильных
+→ Offline capability critical
+→ Battery efficient
+```
+
+**2. Efficient Data Model**
+```
+Минимальный трафик
+Fast access
+Conflict detection
+```
+
+**3. Bridge Native Capabilities**
+```
+Возможность:
+- Trigger native alarms
+- Push notifications
+- Deep links
+```
+
+**4. Efficient Rendering**
+```
+Smooth animations
+Quick year/month switching
+No virtualization (не нужна!)
+```
+
+**5. Accessibility**
+```
+Screen readers
+Keyboard navigation
+```
+
+---
+
+## 3. 📅 Layout Overview
+
+### Year View:
+```
+┌─────────────────────────────────────┐
+│  2022                               │
+├───────┬───────┬───────┬───────┬─────┤
+│ Jan   │ Feb   │ Mar   │ Apr   │ ... │
+│ 1 2 3 │ 1 2 3 │ 1 2 3 │ 1 2 3 │     │
+│ 4 5 6 │ 4 5 6 │ 4 5 6 │ 4 5 6 │     │
+└───────┴───────┴───────┴───────┴─────┘
+
+Click на день → Event list
+```
+
+### Month View:
+```
+┌─────────────────────────────────────┐
+│  June 2022                          │
+├───┬───┬───┬───┬───┬───┬───┤
+│ S │ M │ T │ W │ T │ F │ S │
+├───┼───┼───┼───┼───┼───┼───┤
+│   │   │ 1 │ 2 │ 3 │ 4 │ 5 │
+│ 6 │ 7 │ 8 │ 9 │10 │11 │12 │
+│[Event 1]  │[Event 2]      │
+└───┴───┴───┴───┴───┴───┴───┘
+
+Click на день → Event list
+```
+
+### Day View:
+```
+┌─────────────────────────────────────┐
+│  June 30, 2022                      │
+├─────────────────────────────────────┤
+│ 07:00 - 08:00  [Meeting]            │
+│ 09:00 - 10:30  [Code Review]        │
+│ 12:00 - 13:00  [Lunch]              │
+│ 14:00 - 15:00  [Design Review]      │
+└─────────────────────────────────────┘
+
+Schedule view
+```
+
+---
+
+## 4. 🏗️ Component Architecture
+
+```
+AppRoot
+├── CalendarControls
+│   ├── Create Event
+│   ├── Search
+│   ├── Theme Config
+│   └── Language Config
+├── CalendarView (3 implementations)
+│   ├── YearView
+│   │   └── MonthCell × 12
+│   │       └── EventView
+│   ├── MonthView
+│   │   └── DayCell × 28-31
+│   │       └── EventView
+│   └── DayView
+│       └── EventCell × N
+│           └── EventView
+└── ClientStorage (global state)
+```
+
+**EventView:**
+```
+Generic component для отображения события
+Используется во всех 3 view
+```
+
+---
+
+## 5. 📊 Data Model — Design Requirements
+
+**Требования к модели:**
+
+1. **Universal Entity**
+```
+Одна структура для всех 3 views
+Нет дублирования
+```
+
+2. **Serializable**
+```
+JSON-friendly
+Export/Import support
+```
+
+3. **Minimal Mutations**
+```
+CUD operations → mutate only affected data
+Не перестраиваем структуры
+Меньше CPU load
+```
+
+4. **Easy Access**
+```
+Ideally O(1) access by ID
+No search operations
+```
+
+5. **Minimal Server Transformation**
+```
+Server model ≈ Client model
+Less processing
+```
+
+6. **Conflict Detection Support ⭐**
+```
+Detect overlapping events efficiently
+Handle multi-month spanning events
+```
+
+---
+
+### Data Structures:
+
+```typescript
+interface CalendarStore {
+  // Flattened map: ID → Event
+  events: Map<string, Event>;
+  
+  // Client UI state
+  clientState: {
+    selectedView: 'year' | 'month' | 'day';
+    language: string;
+    timezone: string;
+  };
+}
+
+interface Event {
+  id: string;
+  title: string;
+  description: string;  // Rich text
+  
+  // Timestamps!
+  startTimestamp: number;
+  endTimestamp: number;
+  
+  // Participants
+  participants: UserInfo[];
+  
+  // Conflict tracking (заполняется клиентом)
+  conflictingEvents?: string[];  // Linked list of IDs
+}
+
+interface UserInfo {
+  email: string;
+  firstName?: string;
+  lastName?: string;
+}
+```
+
+**Почему timestamps:**
+```
+✅ Timezone conversion легко
+✅ Точная дата + время
+✅ Математика проще
+✅ Universal format
+```
+
+---
+
+## 6. 🌳 Interval Tree — КЛЮЧЕВОЙ АЛГОРИТМ! ⭐
+
+### Проблема: Conflict Detection
+
+**Scenario:**
+```
+Event 1: June 11, 2022 → July 11, 2022
+Event 2: June 25, 2022 → July 11, 2022
+
+Question: Какие события на June 30?
+```
+
+**Naive Solution:**
+```typescript
+// ❌ O(n) для каждой даты
+function getEventsForDate(date: Date, events: Event[]) {
+  return events.filter(event => 
+    event.start <= date && event.end >= date
+  );
+}
+
+// Для года: 365 × O(n) = O(365n)
+// Не оптимально!
+```
+
+**Alternative: Map by Date**
+```typescript
+// Map: Date → Event[]
+map = {
+  "2022-06-30": [event1, event2],
+  "2022-07-01": [event1, event2],
+  // ...
+}
+
+// ❌ Проблемы:
+// 1. Дублирование: Event на 365 дней = 365 записей
+// 2. Overhead памяти
+// 3. Сложно поддерживать
+```
+
+---
+
+### 🏆 Решение: Interval Tree
+
+**Что это:**
+```
+Binary Search Tree
+Ключ: Start timestamp
+Хранит: Intervals (start, end)
+```
+
+**Complexity:**
+```
+Search: O(log n)
+Insert: O(log n)
+Delete: O(log n)
+
+Для года: 365 × O(log n) = O(365 log n)
+→ НАМНОГО ЛУЧШЕ!
+```
+
+---
+
+### Построение Interval Tree
+
+**Input Events:**
+```
+Event 1: Jun 10 - Jun 16
+Event 2: Jun 07 - Jun 14
+Event 3: Jun 17 - Jun 20
+Event 4: Jun 01 - Jun 02
+Event 5: Jun 11 - Jul 02
+Event 6: Jun 30 - Jul 03
+```
+
+**Step 1: Build BST по Start Date**
+
+```
+            [Jun 10]
+           /        \
+      [Jun 07]    [Jun 17]
+       /              \
+  [Jun 01]         [Jun 30]
+                    /
+               [Jun 11]
+```
+
+**Правило:**
+```
+If newEvent.start < node.start → left
+If newEvent.start > node.start → right
+```
+
+---
+
+**Step 2: Calculate Max End Date для каждого узла**
+
+```
+            [Jun 10, max: Jul 02]
+           /                    \
+   [Jun 07, max: Jul 02]    [Jun 17, max: Jul 03]
+    /                            \
+[Jun 01, max: Jun 02]         [Jun 30, max: Jul 03]
+                               /
+                        [Jun 11, max: Jul 02]
+```
+
+**Max Calculation:**
+```
+node.max = max(
+  node.endDate,
+  node.left.max,
+  node.right.max
+)
+```
+
+---
+
+### Search Algorithm
+
+**Query: Events на June 23?**
+
+```
+Start at root: [Jun 10, max: Jul 02]
+    ↓
+Check: Jun 23 <= Jul 02? ✅ (может быть в этом поддереве)
+    ↓
+Check node: Jun 10 <= Jun 23 <= Jun 16? ❌
+    ↓
+Go left: [Jun 07, max: Jul 02]
+Check: Jun 23 <= Jul 02? ✅
+Check node: Jun 07 <= Jun 23 <= Jun 14? ❌
+    ↓
+Go left: [Jun 01, max: Jun 02]
+Check: Jun 23 <= Jun 02? ❌ (STOP этой ветке)
+    ↓
+Go right from root: [Jun 17, max: Jul 03]
+Check: Jun 23 <= Jul 03? ✅
+Check node: Jun 17 <= Jun 23 <= Jun 20? ❌
+    ↓
+Go right: [Jun 30, max: Jul 03]
+Check: Jun 30 <= Jul 03? ✅
+Check node: Jun 30 <= Jun 23? ❌
+    ↓
+Go left: [Jun 11, max: Jul 02]
+Check: Jun 23 <= Jul 02? ✅
+Check node: Jun 11 <= Jun 23 <= Jul 02? ✅ FOUND!
+
+Result: Event 5
+```
+
+**Правило поиска:**
+```
+1. If target > node.max → STOP (нет событий)
+2. Check if target in [node.start, node.end]
+3. Recursively search left and right
+```
+
+---
+
+### Интеграция в Calendar Store
+
+```typescript
+interface CalendarStore {
+  // Map: ID → Event (O(1) access)
+  events: Map<string, Event>;
+  
+  // Interval Tree для поиска
+  eventsTree: IntervalTree<string>;  // Хранит только IDs!
+  
+  clientState: ClientState;
+}
+```
+
+**Event Flow:**
+
+```
+New Event from Server
+    ↓
+Add to events Map (by ID)
+    ↓
+Insert to Interval Tree (start, end, ID)
+    ↓
+Render Day View
+    ↓
+Query Tree: getEventsForDate(June 30)
+    ↓
+Returns: [id1, id2, id3]
+    ↓
+Access events Map: events.get(id1)
+    ↓
+Detect conflicts → Populate conflictingEvents[]
+    ↓
+Render with conflict indicator
+```
+
+**Ключевое:**
+```
+Tree = только структура для поиска
+Map = фактическое хранилище данных
+
+Mutations → только в Map
+Tree → только insert/delete ID
+```
+
+---
+
+## 7. 🔌 Data Transferring (Protocol)
+
+### Long Polling
+
+**Pros:**
+```
+✅ Easy implementation
+✅ Just HTTP request with timeout
+```
+
+**Cons:**
+```
+❌ High latency (OK для календаря)
+❌ Connection timeouts (proxies, switching cells)
+❌ Traffic overhead (full request headers)
+```
+
+---
+
+### WebSockets
+
+**Pros:**
+```
+✅ Super fast
+✅ Duplex communication
+✅ Real-time
+```
+
+**Cons:**
+```
+❌ Keeping connection = expensive
+❌ NOT HTTP/2 compatible
+❌ Hard to load balance
+❌ Overkill для календаря (не нужен real-time)
+```
+
+---
+
+### Server-Sent Events (SSE) ⭐ ВЫБОР
+
+**Pros:**
+```
+✅ HTTP/2 benefits
+✅ Receive only needed data
+✅ Text format (OK)
+✅ Don't waste device resources
+✅ Unidirectional (receive only) → saves battery!
+✅ Easy to load balance
+```
+
+**Cons:**
+```
+❌ Unidirectional (но нам не нужна отправка часто)
+❌ Weird API
+❌ Text only
+```
+
+**Почему SSE для мобильных:**
+```
+Duplex antenna (WebSockets):
+- Receive + Send active
+- More battery drain
+
+Mono antenna (SSE):
+- Only receive active
+- Less battery drain ✅
+```
+
+---
+
+### GraphQL над SSE ⭐ ФИНАЛЬНОЕ РЕШЕНИЕ
+
+**API Methods:**
+
+```graphql
+# Subscription (SSE)
+subscription SubscribeEvents {
+  subscribeEvents(
+    apiKey: String!
+    userId: ID!
+    timestamp: Int!
+    period: Period!  # YEAR, MONTH, DAY
+  ) {
+    id
+    title
+    startTimestamp
+    endTimestamp
+    participants { email }
+  }
+}
+
+# Query
+query GetEventInfo($id: ID!) {
+  event(id: $id) {
+    id
+    title
+    description  # Rich text
+    participants { email firstName lastName }
+    # Full details
+  }
+}
+
+# Mutations
+mutation CreateEvent($input: EventInput!) {
+  createEvent(input: $input) { id }
+}
+
+mutation UpdateEvent($id: ID!, $input: EventInput!) {
+  updateEvent(id: $id, input: $input) { id }
+}
+
+mutation DeleteEvent($id: ID!) {
+  deleteEvent(id: $id)
+}
+```
+
+**Почему GraphQL:**
+
+```
+✅ High flexibility (select only needed fields)
+✅ Single endpoint
+✅ Subscription = SSE (implementation)
+✅ No need multiple REST endpoints
+✅ Type system out-of-the-box
+
+❌ Not all GraphQL clients support SSE (need custom implementation)
+❌ No HTTP caching (POST requests)
+```
+
+**GraphQL Subscriptions over SSE:**
+```
+HTTP/2 spec → Server-Sent Events
+GraphQL spec → Subscriptions
+
+Implementation:
+GraphQL Subscription → SSE transport layer
+= Best of both worlds!
+```
+
+---
+
+## 8. 🖼️ Rendering Optimization
+
+### No Virtualization Needed!
+
+```
+Календарь:
+- Year: 12 months (мало)
+- Month: 28-31 days (мало)
+- Day: N events (обычно < 20)
+
+→ Virtualization НЕ ТРЕБУЕТСЯ
+→ Focus на smooth animations
+```
+
+---
+
+### Solution 1: Soft Update
+
+**Описание:**
+```
+При переключении года: 2021 → 2022
+→ Update только text nodes
+→ Reuse existing DOM
+```
+
+**Pros:**
+```
+✅ Easy implementation
+```
+
+**Cons:**
+```
+❌ Re-render takes time
+❌ Fetch data on each switch
+❌ Many requests if user switches often
+❌ Not smooth
+```
+
+---
+
+### Solution 2: Pre-rendering ⭐ ВЫБОР
+
+**Описание:**
+```
+Pre-render предыдущий и следующий период
+CSS transform для переключения
+```
+
+**Визуализация:**
+
+```
+┌───────────┬───────────┬───────────┐
+│  2021     │  2022     │  2023     │
+│ (hidden)  │ (visible) │ (hidden)  │
+└───────────┴───────────┴───────────┘
+     ↑           ↑           ↑
+translateX  translateX  translateX
+  (-100%)      (0%)      (+100%)
+```
+
+**User switches to 2023:**
+
+```
+CSS Transform Animation:
+    ↓
+┌───────────┬───────────┬───────────┬───────────┐
+│  2021     │  2022     │  2023     │  2024     │
+│           │ (hidden)  │ (visible) │ (hidden)  │
+└───────────┴───────────┴───────────┴───────────┘
+translateX  translateX  translateX  translateX
+ (-200%)     (-100%)      (0%)      (+100%)
+```
+
+**Pre-render новый 2024**
+
+---
+
+**Implementation:**
+
+```typescript
+// Max screens in memory
+const MAX_SCREENS = 9;
+
+// Current: 2022
+// Pre-rendered: 2018, 2019, 2020, 2021, [2022], 2023, 2024, 2025, 2026
+
+// 4 left + current + 4 right
+```
+
+**Pros:**
+```
+✅ Smooth animations (CSS transform)
+✅ Pre-rendered = instant switch
+✅ Less re-renders
+✅ Better UX
+```
+
+**Cons:**
+```
+❌ More DOM elements (но не критично)
+❌ Harder implementation (но worth it)
+```
+
+**Почему CSS Transform:**
+```
+transform: translateX() → paint layer only
+→ No reflow
+→ GPU-accelerated
+→ Smooth 60fps
+```
+
+---
+
+## 9. 📱 Mobile Bridging
+
+### Problem: Trigger Native Alarms
+
+**Option 1: Web Push Notifications**
+
+```
+Web Push API
+→ Browser notifications
+→ Works on mobile + desktop
+
+Requirements:
+1. User consent (usually denied)
+2. Push server (additional infrastructure)
+
+Cons:
+❌ User must allow
+❌ Additional backend service
+```
+
+---
+
+**Option 2: Deep Links ⭐**
+
+```
+Deep Link Format:
+alarm://create?time=1234567890&title=Meeting
+
+Native app handles link
+→ Creates native alarm
+
+Example:
+<a href="alarm://create?...">Set Reminder</a>
+```
+
+**Requirements:**
+```
+Native app must:
+1. Register URL scheme (alarm://)
+2. Handle link
+3. Parse parameters
+```
+
+**Pros:**
+```
+✅ Native integration
+✅ No user consent needed
+✅ No additional servers
+```
+
+**Cons:**
+```
+❌ Depends on native app implementation
+❌ Not all apps support
+```
+
+---
+
+## 10. ⚡ Optimization
+
+### A. Network Performance
+
+**Bundle Splitting:**
+```javascript
+bundles:
+- core.js
+- year-view.js (lazy load)
+- month-view.js (lazy load)
+- day-view.js (lazy load)
+- analytics.js (defer)
+```
+
+**Compression:**
+```
+Gzip + Brotli (33% better than Gzip)
+```
+
+**Multiple Targets:**
+```
+ES6 bundle (modern browsers, no polyfills)
+ES5 bundle (old browsers, with polyfills)
+```
+
+---
+
+### B. Rendering Performance
+
+**1. Pre-rendering ✅**
+```
+Решено в секции 8
+```
+
+**2. Avoid Reflows**
+```css
+/* ✅ Transform (no reflow) */
+.calendar {
+  transform: translateX(-100%);
+}
+
+/* ❌ Left (reflow) */
+.calendar {
+  left: -100%; /* BAD! */
+}
+```
+
+**3. CSS Animations**
+```css
+.calendar {
+  transition: transform 0.3s ease;
+}
+```
+
+**4. CSS Naming**
+```css
+/* Flat selectors */
+.calendar__month { }
+```
+
+**5. Soft Writes**
+```typescript
+// Update text only, don't recreate nodes
+cell.textContent = newDate;
+```
+
+**6. Inline Critical CSS**
+```html
+<style>
+  /* Above-the-fold styles */
+</style>
+```
+
+**7. Placeholders**
+```
+Loading state → Skeleton UI
+```
+
+---
+
+### C. JavaScript Performance
+
+**1. Minimal Store Mutations**
+```typescript
+// Only mutate affected data
+events.set(id, updatedEvent);
+// Don't rebuild entire tree
+```
+
+**2. Efficient Data Structure**
+```
+Interval Tree → O(log n) search
+```
+
+**3. Minify + Less Polyfills**
+```
+ES6 target → smaller bundle
+```
+
+---
+
+### D. PWA (Offline)
+
+**Service Workers:**
+```typescript
+// Cache all resources
+self.addEventListener('install', (e) => {
+  e.waitUntil(
+    caches.open('calendar-v1').then(cache => {
+      return cache.addAll([
+        '/',
+        '/styles.css',
+        '/app.js'
+      ]);
+    })
+  );
+});
+```
+
+---
+
+## 11. ♿ Accessibility
+
+**1. REMs (not pixels)**
+```css
+.calendar {
+  font-size: 1rem;
+}
+```
+
+**2. Keyboard Shortcuts**
+```
+N: Next period
+P: Previous period
+T: Today
+S: Search
+H: Help
+```
+
+**3. ARIA Attributes**
+```html
+<div role="grid" aria-label="Calendar">
+  <div role="row">
+    <div role="gridcell">30</div>
+  </div>
+</div>
+```
+
+**4. HTML5 Semantics**
+```html
+<table> if possible
+Minimize ARIA usage
+```
+
+**5. Color Schemes**
+```css
+/* Color blindness support */
+@media (prefers-contrast: high) { }
+```
+
+---
+
+## 📊 Event-Driven Architecture
+
+```
+Component
+    ↓ Fire Event
+EventBus
+    ↓ Route Event
+EventHandler
+    ↓ Async Action
+API Call (GraphQL)
+    ↓ Response
+Update ClientStore
+    ↓ Subscribe
+Component Re-renders
+```
+
+**Implementation:**
+```
+React: Redux
+Vue: Vuex
+Angular: NgRx
+```
+
+**Flow:**
+```
+1. AppRoot → init event
+2. EventBus → route to handler
+3. Handler → subscribeEvents (GraphQL)
+4. Update store
+5. Components receive data
+6. Pass to children (YearView, MonthView, DayView)
+7. EventView fires loadEventDetails
+8. Cycle repeats
+```
+
+---
+
+## 🎓 Ключевые выводы
+
+### 1. **Interval Tree ⭐**
+```
+Conflict detection
+O(log n) search
+365 days × O(log n) = efficient
+```
+
+### 2. **SSE + GraphQL**
+```
+SSE: HTTP/2, battery efficient
+GraphQL: Flexible queries, subscriptions
+= Perfect combo
+```
+
+### 3. **Pre-rendering**
+```
+4 left + current + 4 right
+CSS transform
+Smooth animations
+```
+
+### 4. **Mobile First**
+```
+Battery efficient
+Offline capable
+Deep links
+```
+
+### 5. **No Virtualization**
+```
+Мало элементов
+Focus на animations
+```
+
+### 6. **Flattened Store**
+```
+Map: ID → Event (O(1))
+Interval Tree: Conflict detection (O(log n))
+```
+
+---
+
+**Время выполнения:** ~60 минут  
+**Уровень:** Senior/Staff Frontend Engineer  
+**Компании:** Google, Microsoft, Apple, Notion
+
+Удачи на интервью! 📅🚀

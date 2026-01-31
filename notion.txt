@@ -1,0 +1,802 @@
+# Frontend System Design: Notion
+
+## 📋 Введение
+
+Добро пожаловать на урок по системному дизайну Notion — приложения для создания кастомных workspace с продвинутым markdown редактором и database views.
+
+**Что такое Notion:**
+- Web-приложение для структурирования контента
+- Custom markdown syntax
+- Иерархия страниц (pages внутри pages)
+- Database views: Table, Calendar, Timeline
+- Offline-first архитектура
+
+---
+
+## 📝 План System Design
+
+1. ✅ **General Requirements**
+2. ✅ **Advanced Requirements**
+3. ✅ **Mockup & Components Hierarchy**
+4. ✅ **Markdown Parser (Lexer)** ⭐
+5. ✅ **Database Design**
+6. ✅ **State Design**
+7. ✅ **API Design (GraphQL)**
+8. ✅ **Optimization**
+9. ✅ **Accessibility**
+
+---
+
+## 1. 📌 General Requirements
+
+**1. Custom Editor с Live Transformation**
+```
+User types: ## Hello
+→ Автоматически конвертируется в H2
+→ Real-time preview
+```
+
+**2. Extendable Components Library ⭐**
+```
+Легко добавлять новые компоненты
+Единый интерфейс для всех типов
+```
+
+**3. Page Hierarchy**
+```
+Pages внутри pages
+Workspace = дерево страниц
+```
+
+**4. Performance & Accessibility**
+```
+Desktop-first (меньше network concerns)
+Focus на CPU performance
+```
+
+---
+
+## 2. 🎯 Advanced Requirements
+
+**1. Databases**
+```
+Группировка pages
+Multiple views: Table, Calendar, Timeline
+```
+
+**2. Offline-first + Efficient Network**
+```
+PWA mode
+Delta updates (не весь page, только изменения)
+Service Workers
+```
+
+**3. Cross-platform + Multi-viewport**
+```
+Web = кросс-платформенность
+Responsive design
+```
+
+---
+
+## 3. 🏗️ Mockup & Architecture
+
+### Mockup:
+
+```
+┌─────────────────────────────────────────┐
+│  [Workspace Hierarchy]  │  Content Area │
+│                         │               │
+│  📄 Page 1              │  # Heading 1  │
+│    📄 Subpage 1.1       │               │
+│    📄 Subpage 1.2       │  Paragraph... │
+│  📄 Page 2              │               │
+│  📄 Database            │  [Table View] │
+│                         │               │
+└─────────────────────────────────────────┘
+```
+
+---
+
+### Components Hierarchy & Data Flow:
+
+```
+AppRoot (получает rootPageId)
+    ↓
+┌───────────────────┬─────────────────────┐
+│                   │                     │
+ApplicationMenu   ApplicationRouter
+(workspace tree)   (SPA routing)
+│                   │
+└───────────────────┴─────────────────────┘
+                    ↓
+                PageRoot (pageId)
+                    ↓
+                PageContent
+                    ↓
+        ┌───────────┴───────────┐
+        │                       │
+    Static Area          Selected Area
+    (cached)            (contenteditable)
+        │                       │
+        ↓                       ↓
+   [Cached HTML]        MutationObserver
+                               ↓
+                        Detect Changes
+                               ↓
+                        Global Dispatcher
+                               ↓
+                        Action Handler
+                               ↓
+                        Update Global State
+                               ↓
+                        Lexer → Parser → Render
+                               ↓
+                        New HTML
+```
+
+**Ключевые концепции:**
+
+**Static Area:**
+```
+Уже отрендеренный контент
+Кэшируется
+Не отслеживается
+```
+
+**Selected Area:**
+```
+contenteditable attribute
+MutationObserver отслеживает изменения
+Real-time updates
+```
+
+**Почему contenteditable:**
+```
+❌ Нет стандартных input events (onChange)
+✅ MutationObserver для отслеживания DOM changes
+✅ Rich text editing
+```
+
+---
+
+## 4. 🔤 Markdown Parser — КЛЮЧЕВАЯ ЧАСТЬ! ⭐
+
+### Component Types (3 категории):
+
+**1. Visual Components**
+```
+Functional components
+Take data → Render
+NO children support
+
+Examples: H1, H2, H3, Paragraph
+```
+
+**2. Structural Components**
+```
+Accept other components as children
+Structure the page
+
+Examples: Accordion, Columns, Divider
+```
+
+**3. Database Connectable Components**
+```
+Advanced structural
+Accept pages as children
+Represent pages in custom views
+
+Examples: Table, Calendar, Timeline
+```
+
+---
+
+### Lexer Interface:
+
+```typescript
+interface Lexer {
+  process(
+    rules: Rule[],
+    content: string
+  ): ComponentToken[];
+}
+```
+
+**Input:**
+- `rules[]` — набор правил для парсинга
+- `content` — markdown строка
+
+**Output:**
+- `ComponentToken[]` — токены (объекты)
+
+---
+
+### Rule Interface:
+
+```typescript
+interface Rule {
+  // Проверка: подходит ли строка под этот rule?
+  isValid(line: string): boolean;
+  
+  // Извлечь attributes из строки
+  getToken(line: string): ComponentToken;
+}
+```
+
+**Пример работы:**
+```
+Line: "## Hello World"
+
+H1 Rule:
+isValid("## Hello World") → false
+
+H2 Rule:
+isValid("## Hello World") → true
+getToken("## Hello World") → {
+  type: 'h2',
+  props: { text: 'Hello World' }
+}
+```
+
+---
+
+### Component Token Types:
+
+```typescript
+// Base token
+type ComponentToken<TProps> = {
+  type: string;
+  props: TProps;
+}
+
+// Container (accepts children)
+type ContainerComponentToken<TProps> = 
+  ComponentToken<TProps> & {
+    children: ComponentToken[];  // Nested tokens
+  }
+
+// Database component
+type DatabaseComponentToken<TProps> = 
+  ComponentToken<TProps> & {
+    databaseData: DatabaseProps;  // Metadata
+  }
+```
+
+---
+
+### Syntax Spec (примеры):
+
+```
+# H1         → <h1>
+## H2        → <h2>
+[ ] Checkbox → <input type="checkbox">
+--- Divider  → <hr>
+```
+
+**Расширяемость:**
+```
+1. Добавить новый rule в rules[]
+2. Rule содержит regex для парсинга
+3. Lexer автоматически применяет
+→ Легко добавлять компоненты!
+```
+
+---
+
+### Parser Interface:
+
+```typescript
+interface Parser {
+  process(token: ComponentToken): HTMLElement;
+}
+```
+
+**Задачи Parser:**
+- Получить `ComponentToken`
+- Подключить к **Global State** (data layer)
+- Вернуть `HTMLElement`
+
+**Render Set:**
+```
+Map: ComponentToken → Render Function
+
+{
+  'h1': renderH1Function,
+  'table': renderTableFunction,
+  'checkbox': renderCheckboxFunction
+}
+```
+
+**Adding New Component:**
+```
+1. Create component UI
+2. Create rule (Lexer)
+3. Map token → render function (Parser)
+→ Done!
+```
+
+---
+
+### Full Flow:
+
+```
+User types: "## Hello"
+    ↓
+MutationObserver detects change
+    ↓
+Dispatch action: UPDATE_CONTENT
+    ↓
+Action Handler
+    ↓
+Update Global State (content)
+    ↓
+Lexer:
+  - Rules apply
+  - Generate ComponentToken: { type: 'h2', props: { text: 'Hello' } }
+    ↓
+Parser:
+  - Get token
+  - Connect to state
+  - Call renderH2(token)
+    ↓
+Render: <h2>Hello</h2>
+```
+
+---
+
+## 5. 🗄️ Database Design
+
+### Concept:
+
+**Notion Database:**
+```
+НЕ relational database!
+
+Database = Page that contains pages
+Custom views: Table, Calendar, Timeline
+```
+
+**Структура:**
+```
+Database (Page)
+    ↓ has many
+Pages × N
+    ↓ has
+Plugin Data (metadata для view)
+```
+
+---
+
+### Plugin Data:
+
+**Идея:**
+```
+Page имеет разные metadata для разных views
+
+Page:
+  - Timeline Plugin Data: { start, end }
+  - Calendar Plugin Data: { date }
+  - Table Plugin Data: { columns }
+```
+
+**Расширяемость:**
+```
+Новая view → Добавить новый plugin data
+Page автоматически поддерживает новый view
+```
+
+---
+
+### Page Entity:
+
+```typescript
+interface Page {
+  id: string;
+  title: string;
+  content?: string;  // Optional (может быть пустым)
+  icon?: string;
+  children?: Page[];
+  hash?: string;     // Для кэширования рендера
+  
+  // Plugin data для views
+  plugins?: {
+    timeline?: TimelinePluginData;
+    calendar?: CalendarPluginData;
+    table?: TablePluginData;
+  };
+}
+
+// Plugin data types
+interface TimelinePluginData {
+  start: number;  // timestamp
+  end: number;
+}
+
+interface CalendarPluginData {
+  date: number;   // timestamp
+}
+
+interface TablePluginData {
+  columns: string[];
+}
+```
+
+---
+
+### Page View Interface:
+
+```typescript
+interface PageView {
+  render(pages: Page[]): HTMLElement;
+}
+
+// Implementations:
+class TimelineView implements PageView { }
+class CalendarView implements PageView { }
+class TableView implements PageView { }
+```
+
+**Все views — Database Components:**
+```
+Timeline, Calendar, Table → DatabaseComponentToken
+→ Единый интерфейс
+→ Легко добавлять новые views
+```
+
+---
+
+## 6. 🗂️ State Design
+
+```typescript
+interface ApplicationState {
+  // Root page ID
+  rootPageId: string;
+  
+  // Flattened/Normalized pages
+  pages: {
+    [pageId: string]: Page;
+  };
+}
+```
+
+**Почему Normalized:**
+```
+✅ O(1) access: pages[id]
+✅ Easy updates: pages[id] = newPage
+✅ No nested structure
+✅ Efficient для hundreds of pages
+```
+
+**Benefits:**
+```
+Получить page: pages[pageId] → O(1)
+Live updates от сервера: pages[newId] = newPage → Просто!
+Удалить: delete pages[id]
+```
+
+---
+
+## 7. 🔌 API Design
+
+### Protocol Choice:
+
+**Options:**
+
+**1. WebSockets (HTTP/1)**
+```
+❌ Complex to scale
+❌ Overkill (не нужен real-time)
+❌ Not HTTP/2 compatible
+```
+
+**2. REST API (HTTP/2)**
+```
+✅ Simple
+✅ HTTP/2 benefits (caching, parallel)
+
+❌ Hard to design production-ready
+❌ Hard to change later
+❌ Workarounds для flexible fields (query params)
+```
+
+**3. GraphQL (HTTP/2) ⭐ ВЫБОР**
+```
+✅ Single endpoint
+✅ Flexible (select any fields)
+✅ Long-term maintainability
+✅ Server entity ≈ Client entity → Simplicity
+
+❌ POST only (no GET caching)
+❌ Need GraphQL client
+❌ Additional point of failure
+```
+
+---
+
+### GraphQL API:
+
+```graphql
+# Query: Get Page
+query GetPage($id: ID!, $apiKey: String!) {
+  page(id: $id) {
+    id
+    title
+    content
+    icon
+    children { id title }
+    plugins {
+      timeline { start end }
+      calendar { date }
+    }
+  }
+}
+
+# Mutation: Update Page (Delta!)
+mutation UpdatePage(
+  $id: ID!,
+  $delta: String!,  # Только изменения!
+  $apiKey: String!
+) {
+  updatePage(id: $id, delta: $delta) { id }
+}
+
+# Subscription: Live Updates (SSE)
+subscription SubscribePageChanges(
+  $pageId: ID!,
+  $apiKey: String!
+) {
+  pageUpdated(pageId: $pageId) {
+    id
+    content
+    # Changed fields
+  }
+}
+```
+
+**Ключевое:**
+
+**Delta Updates:**
+```
+Проблема: Page может быть большим
+Решение: Отправляем только изменения (как Git diff)
+
+External library:
+- Calculate diff
+- Send delta
+- Server applies delta
+→ Экономия трафика!
+```
+
+**GraphQL Subscriptions over SSE:**
+```
+HTTP/2 → Server-Sent Events
+GraphQL → Subscriptions (interface)
+
+Implementation:
+GraphQL Subscription → SSE transport
+→ Live collaborative editing support!
+```
+
+**GraphQL Client Benefits:**
+```
+Syncs server state ↔ client state
+Auto-updates on subscription
+Manages cache
+```
+
+---
+
+## 8. ⚡ Optimization
+
+### A. Network & JS Performance
+
+**1. HTTP/2 Support**
+```
+✅ Parallel connections
+✅ Multiplexing
+✅ Server Push
+```
+
+**2. Service Workers (PWA)**
+```
+Cache all assets
+Offline mode ✅
+First load critical
+```
+
+**3. Preconnect для Non-critical**
+```html
+<link rel="preconnect" href="/analytics.js">
+```
+
+**4. ES6+ Bundle**
+```
+Desktop-first = Modern Chrome
+→ No polyfills needed!
+→ Smaller bundle size
+```
+
+**5. Bundle Splitting**
+```javascript
+bundles:
+- vendor.js (React, etc.)
+- components.js (lazy loaded!)
+  - h1.js
+  - table.js
+  - calendar.js (load только когда нужен)
+```
+
+**6. Compression**
+```
+Brotli + Gzip
+```
+
+**7. Image Optimization**
+```
+WebP format
+Image optimization service:
+  - Resize
+  - Convert PNG → WebP
+  - Save CDN space
+```
+
+---
+
+### B. Rendering Performance
+
+**CSS:**
+```
+✅ Avoid reflows
+✅ CSS animations (GPU)
+✅ CSS naming strategy (BEM, Tailwind)
+✅ Flat selectors
+```
+
+**DOM:**
+```
+✅ Minimize re-renders
+✅ Track changes только в Selected Area (MutationObserver)
+✅ Parsing cache (re-use tokens)
+✅ Component virtualization (Table)
+```
+
+**UX:**
+```
+React/Vue/Angular делают optimization автоматически
+(Но design framework-agnostic)
+```
+
+---
+
+## 9. ♿ Accessibility
+
+**1. Use REM units**
+```css
+/* Scales with browser zoom */
+font-size: 1rem;
+```
+
+**2. Hotkeys**
+```
+Notion = hotkey champion
+Design later (too many!)
+```
+
+**3. Color Schemas**
+```
+Support visual disabilities
+High contrast modes
+Color blindness themes
+```
+
+**4. Semantic HTML**
+```html
+<!-- ✅ Use correct tags -->
+<table> для tables
+<input> для inputs
+
+<!-- ❌ Don't -->
+<div> everywhere
+```
+
+**5. Alt Attributes**
+```html
+<img alt="AI-generated description">
+```
+
+**Правило:**
+```
+HTML accessible by default
+Use native elements
+Minimize custom components
+```
+
+---
+
+## 📊 Event-Driven Architecture
+
+```
+Component
+    ↓ User Action
+Global Dispatcher (available everywhere)
+    ↓ Route Action
+Action Handler
+    ↓ Process
+Update Global State
+    ↓ State Changed
+Components Re-render (subscribed)
+```
+
+**Implementation:**
+```
+Redux (React)
+Vuex (Vue)
+NgRx (Angular)
+```
+
+---
+
+## 🎓 Ключевые выводы
+
+### 1. **Extendable Components Library**
+```
+3 types: Visual, Structural, Database
+Unified interface
+Easy to add new components
+```
+
+### 2. **Custom Markdown Parser**
+```
+Lexer: Markdown → Tokens
+Parser: Tokens → HTML + State
+Render Set: Token → Render Function
+
+Add component:
+1. Create rule
+2. Map render function
+→ Done!
+```
+
+### 3. **Database = Pages + Plugin Data**
+```
+Database = Page
+Pages have plugin metadata
+Easy to add new views
+```
+
+### 4. **GraphQL + Delta Updates**
+```
+Flexible queries
+Delta = only changes
+SSE subscriptions
+```
+
+### 5. **Offline-first**
+```
+Service Workers
+Cache assets
+PWA mode
+```
+
+### 6. **contenteditable + MutationObserver**
+```
+Real-time editing
+No standard input events
+MutationObserver tracks DOM
+```
+
+### 7. **Normalized State**
+```
+Flattened: { [id]: Page }
+O(1) access
+Easy updates
+```
+
+---
+
+**Время выполнения:** ~60 минут  
+**Уровень:** Senior/Staff Frontend Engineer  
+**Компании:** Notion, Coda, Obsidian, Roam Research
+
+Удачи на интервью! 📝🚀

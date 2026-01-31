@@ -1,0 +1,857 @@
+# Frontend System Design: Financial Dashboard (Trading View)
+
+## 📋 Введение
+
+Добро пожаловать на урок по системному дизайну Financial Dashboard — приложения для отображения множества финансовых графиков с real-time данными, drag-and-drop интерфейсом и синхронизацией между charts.
+
+**Что такое Trading View:**
+- Множественные финансовые графики на экране
+- Resizable layouts (6-column, 8×8 grid, etc.)
+- Синхронизация по interval и symbol
+- Real-time financial data
+- Multi-monitor support
+
+**Типичные компании:** Trading companies, Bloomberg, E*TRADE, Robinhood
+
+---
+
+## 📝 План System Design
+
+1. ✅ **Requirements & Mockup**
+2. ✅ **Layout Design (CSS Grid + Sandwich)** ⭐
+3. ✅ **Data & Property Model**
+4. ✅ **Data Storage (IndexedDB + Bucketing)** ⭐
+5. ✅ **Data API (WebTransport vs WebSockets)**
+6. ✅ **Multi-Window Support**
+
+---
+
+## 1. 📌 Requirements
+
+### Product Requirements:
+
+**1. Multiple Resizable Charts**
+```
+User configures layout
+Grid-based system
+```
+
+**2. Unified Data Interface**
+```
+Different APIs (legacy + new)
+→ Same data format
+→ Single interface
+```
+
+**3. Extensible Chart Types**
+```
+Each chart type:
+- Different data model
+- Transform generic data → chart-specific
+```
+
+**4. Synchronization**
+```
+Sync by:
+- Asset ID (Apple → все charts Apple)
+- Timeframe (1h → все charts 1h)
+```
+
+---
+
+### Non-Product Requirements:
+
+**1. Network Performance ⭐**
+```
+Огромное количество данных
+Browser cache optimization
+```
+
+**2. Rendering Stability**
+```
+Change timeframe: 1d → 1h
+→ Downscale existing data
+→ Show partial chart (не ждать API)
+```
+
+**3. Legacy API Support**
+```
+Unified interface
+Multiple endpoints
+Same response format
+```
+
+---
+
+## 2. 🎨 Layout Design — КЛЮЧЕВОЕ! ⭐
+
+### Mockup:
+
+```
+┌─────────────────────────────────────────┐
+│  [Chart 1]  │  [Chart 2]  │  [Chart 3] │
+├─────────────────────────────────────────┤
+│  [Chart 4]              │  [Chart 5]    │
+├─────────────────────────────────────────┤
+│  [Chart 6]  │  [Chart 7]  │  [Chart 8] │
+└─────────────────────────────────────────┘
+
+Resizable, drag-and-drop
+```
+
+---
+
+### CSS Grid System
+
+**Requirements:**
+```
+✅ User adjusts grid (8×8, 6×12, etc.)
+✅ Modern browsers only (trading desks)
+→ CSS Grid support guaranteed
+```
+
+**Почему CSS Grid:**
+```
+✅ Natural grid (vs Flexbox)
+✅ Native CSS standard
+✅ Perfect для нашего use case
+```
+
+---
+
+### Sandwich Design — 3 Layers ⭐
+
+**Концепция:**
+```
+Layer 1: Grid Container (CSS Grid)
+Layer 2: Cell Grid (drag-and-drop handlers)
+Layer 3: Chart Containers (actual charts)
+```
+
+**Visualisation:**
+
+```
+Step 1: Create Grid Container
+┌───┬───┬───┬───┐
+│ 0 │ 1 │ 2 │ 3 │  ← Columns
+├───┼───┼───┼───┤
+│   │   │   │   │  ← Rows
+├───┼───┼───┼───┤
+│   │   │   │   │
+└───┴───┴───┴───┘
+
+CSS:
+.container {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+}
+```
+
+---
+
+**Step 2: Create Cell Grid (Layer 2)**
+
+```
+Each cell = droppable container
+
+┌───┬───┬───┬───┐
+│▓▓▓│   │   │   │  ← data-row="0" data-col="0"
+├───┼───┼───┼───┤
+│   │   │   │   │
+├───┼───┼───┼───┤
+│   │   │   │   │
+└───┴───┴───┴───┘
+
+Each cell:
+<div 
+  data-row="0" 
+  data-col="0"
+  class="drop-cell"
+>
+</div>
+```
+
+---
+
+**Step 3: Place Chart (Layer 3)**
+
+```
+Chart dropped на row=0, col=0
+Span: 2 columns × 2 rows
+
+┌─────────┬───┬───┐
+│ Chart 1 │   │   │
+│         │   │   │
+├─────────┼───┼───┤
+│   │   │   │   │
+└───┴───┴───┴───┘
+
+CSS:
+.chart {
+  grid-column: 1 / 3;  /* span 2 cols */
+  grid-row: 1 / 3;     /* span 2 rows */
+}
+```
+
+---
+
+### Event Delegation ⭐
+
+**Problem:**
+```
+8×8 grid = 64 cells
+64 event handlers = Memory inefficient
+```
+
+**Solution: Event Bubbling**
+
+```
+Grid Container (root)
+  ↑ Events bubble up
+Cell × 64 (emit events)
+
+Register 1 handler на root
+→ Detect target cell via event.target
+→ Get data attributes
+```
+
+**Implementation:**
+
+```typescript
+gridContainer.addEventListener('drop', (e) => {
+  const target = e.target.closest('[data-row][data-col]');
+  
+  const row = target.dataset.row;
+  const col = target.dataset.col;
+  
+  // Place chart
+  placeChart(row, col);
+});
+```
+
+**Benefits:**
+```
+✅ 1 handler вместо 64
+✅ Memory efficient
+✅ Performance optimized
+```
+
+---
+
+### CSS Grid Overlapping
+
+**Ключевая фича:**
+```
+CSS Grid allows multiple items in same cell
+→ "Sandwich" multiple layers
+```
+
+**Layers:**
+```
+Z-index 1: Grid container
+Z-index 2: Cell grid (droppable)
+Z-index 3: Charts (visible)
+```
+
+---
+
+## 3. 📊 Data & Property Model
+
+### Component Hierarchy:
+
+```
+Draggable (generic drag-and-drop)
+    ↓
+Dashboard Component (data fetching)
+    ↓
+Chart Element (data transformation)
+```
+
+---
+
+### Interfaces:
+
+```typescript
+// 1. Chart Element Interface
+interface IChartElement<T> {
+  // Transform generic data → chart-specific
+  transformer(source: TData): T;
+}
+
+// All charts implement this:
+class DataTable implements IChartElement<TableData> { }
+class PieChart implements IChartElement<PieData> { }
+class LineChart implements IChartElement<LineData> { }
+```
+
+---
+
+### TData (Generic Financial Data):
+
+```typescript
+interface TData {
+  asset: string;        // "AAPL"
+  start: number;        // timestamp
+  end: number;          // timestamp
+  interval: Interval;   // "1h", "5m", "1d"
+  points: Point[];
+}
+
+interface Point {
+  open: number;   // Opening price
+  close: number;  // Closing price
+}
+
+type Interval = "1m" | "5m" | "1h" | "1d" | "1w";
+```
+
+---
+
+### Dashboard Component:
+
+```typescript
+interface TDashboardComponent {
+  // State
+  range: { start: number; end: number };
+  asset: string;
+  interval: Interval;
+  
+  // Chart type
+  component: TChartUnion;  // "pie" | "line" | "table"
+  
+  // Custom render (optional)
+  render?(source: TData): Component;
+}
+```
+
+**Ключевое:**
+```
+Dashboard Component:
+- Controls API requests
+- Manages state (range, interval, asset)
+- Passes data to charts
+```
+
+---
+
+## 4. 🗄️ Data Storage — КРИТИЧНО! ⭐
+
+### Problem: Large Dataset
+
+**Scenario:**
+```
+1 second = 1 point
+1 day = 86,400 points
+1 year = 31,536,000 points
+
+Storing in RAM = ❌ Not scalable
+```
+
+---
+
+### Solution: IndexedDB + Bucketing
+
+**IndexedDB:**
+```
+Browser local database
+30% of hard drive available
+~2GB per domain
+Perfect для large datasets
+```
+
+---
+
+### Flattened Structure:
+
+```typescript
+interface ApplicationState {
+  [assetId: string]: {
+    [bucketKey: string]: Point[];
+  };
+}
+```
+
+---
+
+### Bucketing Strategy ⭐
+
+**Problem: O(n) Scan**
+
+```
+Naive approach:
+1 point = 1 entry
+
+Fetch 60 minutes of 1-second data:
+→ Scan 3,600 points
+→ O(3600) = Slow!
+```
+
+---
+
+**Solution: 5-minute Buckets**
+
+```
+Bucket 0: 00:00 - 05:00 (300 points)
+Bucket 1: 05:00 - 10:00 (300 points)
+Bucket 2: 10:00 - 15:00 (300 points)
+...
+Bucket 11: 55:00 - 60:00 (300 points)
+
+Fetch 60 minutes:
+→ Scan 12 buckets
+→ O(12) = Fast! ✅
+```
+
+---
+
+### Compound Key (3 parts):
+
+```typescript
+interface BucketKey {
+  assetId: string;     // "AAPL"
+  bucketId: number;    // 0, 1, 2, ...
+  timeframe: string;   // "5m", "1h", "1d"
+}
+
+// Example keys:
+"AAPL-0-5m"   → Bucket 0, 5-minute timeframe
+"AAPL-1-5m"   → Bucket 1, 5-minute timeframe
+"AAPL-0-1h"   → Bucket 0, 1-hour timeframe
+```
+
+---
+
+### Multiple Timeframes:
+
+```
+Same data, different buckets:
+
+5-minute buckets:  288 buckets/day
+1-hour buckets:    24 buckets/day
+1-day buckets:     365 buckets/year
+
+Storage overhead: ✅ Acceptable
+→ On disk, not RAM
+→ Fast access
+```
+
+---
+
+### Bucket ID Calculation:
+
+```typescript
+function getBucketId(
+  timestamp: number,
+  bucketSize: number
+): number {
+  return Math.floor(timestamp / bucketSize);
+}
+
+// Examples:
+timestamp = 300001 ms  (5:00:01)
+bucketSize = 300000 ms (5 minutes)
+
+bucketId = 300001 / 300000 = 1 ✅
+```
+
+---
+
+### Storage Calculation:
+
+**Worst case: 1 second = 1 point**
+
+```
+Calculations:
+24 hours × 60 min × 60 sec = 86,400 points/day
+
+Point size:
+- open: 4 bytes
+- close: 4 bytes
+→ 8 bytes/point
+
+Day: 86,400 × 8 = 691,200 bytes = 0.7 MB
+Year: 0.7 MB × 365 = 255 MB
+
+Verdict: ✅ Acceptable!
+```
+
+**5-minute buckets:**
+```
+1440 min/day ÷ 5 = 288 buckets
+86,400 points ÷ 288 = 300 points/bucket
+```
+
+---
+
+### IndexedDB Durability:
+
+```
+Reduce durability:
+✅ Increase throughput
+✅ More requests handled
+✅ OK to lose 1% of data (not critical для charts)
+```
+
+---
+
+## 5. 📉 Data Upsampling & Downsampling
+
+### Downsampling (More → Less) ⭐
+
+**Scenario:**
+```
+Current: 5-minute timeframe
+Change to: 1-hour timeframe
+```
+
+**Solution: Aggregate existing data**
+
+```
+5-minute buckets (0-60 min):
+[Bucket 0] [Bucket 1] ... [Bucket 11]
+
+Downsample to 1 hour:
+→ Take open from Bucket 0 (first point)
+→ Take close from Bucket 11 (last point)
+→ Create 1 single 1-hour point
+
+Result: ✅ No server request!
+Process: Lossless
+```
+
+---
+
+### Upsampling (Less → More)
+
+**Scenario:**
+```
+Current: 1-hour timeframe
+Change to: 5-minute timeframe
+```
+
+**Problem:**
+```
+Can't create detailed data from aggregated
+→ Need server request
+```
+
+**Temporary Solution: Placeholders**
+
+```
+While waiting for API:
+1. Create empty 5-minute buckets
+2. Fill each with duplicated 1-hour entry
+3. Show placeholder chart (loading state)
+4. Replace when real data arrives
+
+Result: User sees something (not blank)
+Process: Lossy (temporary)
+```
+
+---
+
+## 6. 🔌 Data API
+
+### Protocol Comparison:
+
+#### A. WebSockets
+
+**Pros:**
+```
+✅ Real-time communication
+✅ Low latency
+✅ Binary data
+✅ Bidirectional
+```
+
+**Cons:**
+```
+❌ High complexity (serialization, error handling, reconnection)
+❌ Stateful (hard to scale)
+❌ Hard to load balance
+```
+
+---
+
+#### B. Server-Sent Events (SSE)
+
+**Pros:**
+```
+✅ HTTP/2 based
+✅ Stateless (auto reconnection)
+✅ Multiplexing (200 streams per TCP connection)
+✅ Easy to scale
+```
+
+**Cons:**
+```
+❌ Slower than WebSockets
+❌ Text data only
+❌ Unidirectional (OK для нашего use case)
+```
+
+---
+
+#### C. HTTP Streaming
+
+**Pros:**
+```
+✅ Binary data
+✅ HTTP/2 benefits
+```
+
+**Cons:**
+```
+❌ Slow (TCP handshake overhead)
+❌ No frame marking (can't mark data boundaries)
+→ Not suitable для financial data
+```
+
+---
+
+#### D. WebTransport ⭐ FUTURE
+
+**Pros:**
+```
+✅ UDP-based (QUIC protocol)
+✅ Zero RTT (no 3-way handshake)
+✅ Faster than WebSockets
+✅ Binary data
+✅ Frame marking support
+```
+
+**Cons:**
+```
+❌ Limited support (60% browsers)
+❌ Not all servers support
+```
+
+**Verdict:**
+```
+Modern apps → WebTransport
+Legacy support → WebSockets или SSE
+```
+
+---
+
+### Binary Data & Protobuf
+
+**Why Binary:**
+```
+Text data: Large size
+Binary data: Compressed
+
+Protobuf: 6-8× compression
+→ Reduces bandwidth
+→ Improves latency
+```
+
+**Trade-off:**
+```
+Cost: Serialization/Deserialization overhead
+Benefit: Massive data reduction
+Verdict: ✅ Worth it для large datasets
+```
+
+---
+
+### Unified Interface:
+
+```typescript
+interface IDataAPI {
+  getData(
+    assetId: string,
+    start: number,
+    end: number,
+    timeframe: Interval
+  ): TData;
+}
+
+// Implementations:
+class WebSocketAPI implements IDataAPI { }
+class SSE_API implements IDataAPI { }
+class WebTransportAPI implements IDataAPI { }
+```
+
+**Subscription Pattern:**
+```
+Subscribe для specific data
+→ Different transports (WebSockets, SSE, WebTransport)
+→ Same interface
+→ Easy to switch
+```
+
+---
+
+## 7. 🖥️ Multi-Window Support
+
+### Concept:
+
+```
+Window 1 (Host)          Window 2 (Extension)
+     ↓                         ↓
+ [State Master]          [State Replica]
+     ↓                         ↑
+     └──── Broadcast Channel ──┘
+```
+
+---
+
+### Architecture:
+
+**Window 1 (Host):**
+```
+✅ Controls layout
+✅ Manages sync config
+✅ Writes state updates
+✅ Fetches data
+```
+
+**Window 2 (Extension):**
+```
+✅ Reads state
+✅ Displays charts
+❌ NEVER writes state directly
+→ Sends events to Host
+```
+
+---
+
+### Communication:
+
+**1. LocalStorage (Initialization)**
+
+```typescript
+localStorage:
+{
+  hostId: "window-abc123",
+  extensionIds: ["window-xyz789", "window-def456"]
+}
+
+Window 2 checks:
+if (localStorage.hostId) {
+  // Connect to host
+}
+```
+
+---
+
+**2. Broadcast Channel (Real-time)**
+
+```typescript
+// Host → Extension
+channel.postMessage({
+  event: "chart-update",
+  payload: {
+    chartId: "chart-1",
+    assetId: "AAPL",
+    data: { ... }
+  }
+});
+
+// Extension → Host (request)
+channel.postMessage({
+  event: "fetch-data",
+  payload: {
+    assetId: "TSLA",
+    sourceId: "window-xyz789"
+  }
+});
+```
+
+---
+
+### Benefits:
+
+```
+✅ No race conditions (только Host пишет)
+✅ State synchronization (Host controls)
+✅ Same IndexedDB (shared storage)
+✅ Broadcast Channel (event-based communication)
+```
+
+---
+
+## 📊 Component Data Flow
+
+```
+User Action (change interval)
+    ↓
+Dashboard Component
+    ↓
+Check IndexedDB
+    ↓ Cache MISS
+API Request (WebTransport/WebSockets)
+    ↓
+Store in IndexedDB (bucketed)
+    ↓
+Update ApplicationState
+    ↓
+Chart Element
+    ↓
+Transformer (TData → ChartData)
+    ↓
+Render Chart
+```
+
+**Synchronization:**
+```
+Chart 1 changes interval → All charts update
+→ Dashboard Component broadcasts
+→ All charts re-render
+```
+
+---
+
+## 🎓 Ключевые выводы
+
+### 1. **Sandwich Design (3 Layers)**
+```
+CSS Grid + Cell Grid + Charts
+Event delegation (1 handler)
+Memory efficient
+```
+
+### 2. **IndexedDB + Bucketing ⭐**
+```
+5-minute buckets → 12 buckets для 1 hour
+O(12) вместо O(3600)
+Multiple timeframes (5m, 1h, 1d)
+Compound key: assetId-bucketId-timeframe
+```
+
+### 3. **Data Sampling**
+```
+Downsample: Aggregate buckets (lossless)
+Upsample: Placeholders + API request (lossy)
+```
+
+### 4. **WebTransport > WebSockets**
+```
+Faster (Zero RTT)
+UDP-based (QUIC)
+Future standard
+```
+
+### 5. **Multi-Window = Host + Extensions**
+```
+Host controls state
+Extensions read only
+Broadcast Channel communication
+```
+
+### 6. **Binary Data + Protobuf**
+```
+6-8× compression
+Reduced bandwidth
+Worth serialization cost
+```
+
+---
+
+**Время выполнения:** ~60 минут  
+**Уровень:** Senior/Staff Frontend Engineer  
+**Компании:** Trading companies, Bloomberg, Interactive Brokers, TradingView
+
+Удачи на интервью! 📈🚀

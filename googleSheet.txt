@@ -1,0 +1,978 @@
+# Frontend System Design: Google Sheets
+
+## 📋 Введение
+
+Добро пожаловать на урок по системному дизайну Google Sheets с фокусом на UI перспективу, алгоритмы разрешения зависимостей между ячейками и виртуализацию больших датасетов.
+
+**Что такое Google Sheets:**
+- Система электронных таблиц
+- Data analysis, financial planning, budget tracking
+- Формулы: `=A1+B1`, зависимости между ячейками
+- Форматирование: bold, italic, strikethrough
+- Типы данных: date, number, string, custom
+
+---
+
+## 📝 План System Design
+
+1. ✅ **Общие требования**
+2. ✅ **Функциональные требования**
+3. ✅ **Fundamental Design Approach** (Canvas vs DOM)
+4. ✅ **Архитектура компонентов**
+5. ✅ **Virtualization Design** ⭐
+6. ✅ **Formula Parsing & Dependencies** ⭐
+7. ✅ **State Management**
+8. ✅ **Оптимизация**
+9. ✅ **Accessibility**
+
+---
+
+## 1. 📌 Общие требования
+
+**1. CRUD Operations**
+```
+✅ Create spreadsheet
+✅ Save spreadsheet
+✅ Edit spreadsheet
+```
+
+**2. Formatting**
+```
+✅ Bold, Italic, Strikethrough
+✅ Generic system (легко добавлять новые типы)
+```
+
+**3. Large Spreadsheet Size**
+```
+Default: 1000 rows × 26 columns = 26,000 cells
+Должна поддерживать расширение
+```
+
+**4. Formula Parsing ⭐**
+```
+✅ Cell references (=A1+B1)
+✅ Dependencies (A1 → B1 → C1)
+✅ Complex formulas
+```
+
+**5. Column/Row Resizing**
+```
+✅ Change width/height dynamically
+```
+
+---
+
+## 2. 🎯 Функциональные требования
+
+**1. Multi-platform**
+```
+✅ Tablets, phones, laptops, desktops
+```
+
+**2. Performance — КРИТИЧНО! ⭐**
+```
+Должна ощущаться как offline app
+→ No loading placeholders
+→ Instant calculations
+```
+
+**3. PWA Mode**
+```
+Работа offline
+Service Workers
+```
+
+**4. Excellent DOM Performance**
+```
+Large datasets → Virtualization обязательна
+```
+
+**5. State Management**
+```
+Efficient storage
+Fast cell access
+```
+
+**6. Accessibility**
+```
+Screen readers
+Keyboard navigation
+```
+
+---
+
+## 3. 🎨 Fundamental Design Approach — КЛЮЧЕВОЙ ВЫБОР!
+
+### Canvas vs DOM — Trade-offs
+
+#### A. Canvas Approach
+
+**Pros:**
+```
+✅ GPU-accelerated rendering
+✅ Better performance (широкий спектр устройств)
+✅ Best FPS
+✅ No DOM overhead
+```
+
+**Cons:**
+```
+❌ Completely different methodology
+❌ Need abstraction library over canvas primitives
+❌ Specific engineering skills required
+❌ More expensive development
+❌ Longer onboarding time
+❌ Accessibility = real challenge (mix DOM + Canvas)
+```
+
+---
+
+#### B. DOM Approach ⭐ ВЫБОР
+
+**Pros:**
+```
+✅ Easy to develop (standard)
+✅ Any engineer can work
+✅ Accessibility much easier
+✅ Cheaper development
+✅ Faster time-to-market
+```
+
+**Cons:**
+```
+❌ Performance affected (large DOM = memory + CPU)
+❌ Virtualization complex (vertical + horizontal)
+```
+
+---
+
+### 🏆 Decision: DOM Elements
+
+**Обоснование:**
+```
+Canvas:
+→ Industry solution
+→ Millions of users
+→ Company has resources
+→ Long-term investment
+
+DOM:
+→ Internal tool
+→ Limited functions
+→ Cost-effective
+→ Faster development
+→ Most engineers can work
+```
+
+**Для этого дизайна: DOM approach**
+
+---
+
+## 4. 🏗️ Архитектура компонентов
+
+### High-Level Hierarchy:
+
+```
+SheetApp (root)
+└── TableEditor
+    ├── ControlPanel
+    │   └── Formatting buttons, functions
+    └── CellGrid
+        ├── RowCounter (A, B, C...)
+        ├── ColumnCounter (1, 2, 3...)
+        └── Rows × N
+            └── Cells × N
+```
+
+**Layout:**
+```
+┌─────────────────────────────────────┐
+│  [Control Panel]                    │ ← Formatting
+├───┬─────────────────────────────────┤
+│ A │ B  │ C  │ D  │ E  │ F  │       │ ← Columns
+├───┼────┼────┼────┼────┼────┼───────┤
+│ 1 │    │    │    │    │    │       │ ← Rows
+│ 2 │    │=A1 │    │    │    │       │
+│ 3 │    │+B1 │    │    │    │       │
+│...│    │    │    │    │    │       │
+└───┴────┴────┴────┴────┴────┴───────┘
+    ↑                            ↑
+Vertical virtualization    Horizontal
+    needed                virtualization
+                          NOT needed
+```
+
+---
+
+## 5. ♾️ Virtualization Design — КРИТИЧНО! ⭐
+
+### Analysis: Vertical vs Horizontal
+
+**Problem:**
+```
+1000 rows × 26 columns = 26,000 DOM elements
+→ Performance nightmare!
+```
+
+**Decision:**
+```
+Vertical Virtualization: ✅ REQUIRED
+→ Rows can be 10,000+
+→ Critical for performance
+
+Horizontal Virtualization: ❌ NOT REQUIRED
+→ 26 columns = default (A-Z)
+→ Можно расширить до 72-78 (AAZ)
+→ Constraint: Max 200 columns
+→ Simplifies design significantly!
+```
+
+---
+
+### Page Size Constants
+
+```typescript
+const PAGE_SIZE = {
+  phone: 50,
+  tablet: 100,
+  laptop: 140,
+  desktop: 150,
+  largeDesktop: 200
+};
+
+const LIMIT = PAGE_SIZE * 2; // Buffer!
+```
+
+**Почему buffer:**
+```
+Page size = 50
+Limit = 100 (2 × page size)
+
+Без buffer:
+- Load 50 → Remove old 50
+- User видит удаление элементов
+- Bad UX!
+
+С buffer:
+- Load 50 new → Keep 50 old as buffer
+- Reuse buffer elements
+- Smooth UX!
+```
+
+---
+
+### Virtualization Setup
+
+```
+┌─────────────────────────────┐
+│ Top Intersection Observer   │ ← Trigger: Load previous
+├─────────────────────────────┤
+│                             │
+│  Viewport (visible rows)    │
+│                             │
+├─────────────────────────────┤
+│ Bottom Intersection Observer│ ← Trigger: Load next
+└─────────────────────────────┘
+
+Content Height = Total size of all rows
+→ Динамически изменяется при скролле
+```
+
+**Ключевое:**
+```css
+/* Absolute positioning → No reflow! */
+.row {
+  position: absolute;
+  transform: translateY(0); /* CSS transform */
+}
+```
+
+**Почему absolute + transform:**
+```
+Regular position:
+- Change top/left → Reflow!
+- Recalculate all dependent elements
+- Expensive!
+
+Absolute + Transform:
+- Separate stacking context
+- Move pixels only
+- No reflow!
+- GPU-accelerated
+```
+
+---
+
+### Virtualization Flow: Scroll Down
+
+**Initial State:**
+```
+Rows 1-10: Visible ✅
+Limit: 10 (page size × 1)
+Content Height: 10 rows
+```
+
+**Step 1: Touch Bottom Observer**
+```
+Load rows 11-20
+Rows 1-10: Buffer (not visible, but in DOM)
+Rows 11-20: Visible ✅
+Limit: 20 (page size × 2)
+Content Height: 20 rows
+```
+
+**Step 2: Load 3rd Page (Recycling!)**
+```
+Problem: Limit reached (20 rows)
+Solution: Recycle buffer rows
+
+Actions:
+1. Take rows 1-10 (buffer)
+2. Update data: row 1 → row 21, row 2 → row 22, etc.
+3. Move using CSS transform: translateY(height of 20 rows)
+4. Create empty space at top (padding/margin)
+5. Update Content Height
+
+Result:
+Rows 11-20: Buffer
+Rows 21-30: Visible ✅
+DOM nodes: Still 20! (reused)
+```
+
+---
+
+### Hard Write vs Soft Write ⭐
+
+**Hard Write (❌ Slow):**
+```
+Remove entire <tr>
+Create new <tr>
+  Create <td>
+    Create text node
+Insert to DOM
+→ Full DOM manipulation
+→ Reflow!
+```
+
+**Soft Write (✅ Fast):**
+```
+Keep <tr> and <td>
+Update only text node
+→ Minimal DOM manipulation
+→ No reflow!
+→ 10x faster!
+```
+
+**Implementation:**
+```typescript
+// Soft write
+row.cells.forEach((cell, index) => {
+  const newData = newRowData[index];
+  cell.textContent = newData; // Just update text!
+});
+```
+
+**Reconciliation:**
+```
+React, Vue, Angular делают это автоматически
+Мы реализуем вручную (framework-agnostic)
+```
+
+---
+
+### CSS Transform для перемещения
+
+```typescript
+// Calculate cumulative height of rows 1-10
+const accumulatedHeight = rows.slice(0, 10)
+  .reduce((sum, row) => sum + row.height, 0);
+
+// Move rows using transform
+recycledRows.forEach(row => {
+  row.style.transform = `translateY(${accumulatedHeight}px)`;
+});
+```
+
+**Результат:**
+```
+1. Rows перемещены (no reflow!)
+2. Empty space создано сверху
+3. Content Height сохранён
+4. Observers перемещены
+5. Smooth scrolling ✅
+```
+
+---
+
+## 6. 🧮 Formula Parsing & Dependencies — КРИТИЧНО! ⭐
+
+### Directed Acyclic Graph (DAG)
+
+**Пример формул:**
+```
+C1 = A1 + B1 + D1
+A1 = 5
+B1 = 10
+D1 = E1 * 2
+E1 = 3
+```
+
+**Граф зависимостей:**
+```
+    E1 (3)
+     ↓
+    D1 (6)
+     ↓
+A1 (5) → C1 (21)
+     ↑
+B1 (10)
+```
+
+**Свойства:**
+```
+✅ Directed: Edges имеют направление
+✅ Acyclic: Нет циклов (по умолчанию)
+✅ Graph: Вершины (cells) + Рёбра (dependencies)
+```
+
+**Как в npm:**
+```
+package.json dependencies = DAG
+Точно так же работает Google Sheets!
+```
+
+---
+
+### Topological Sort ⭐ КЛЮЧЕВОЙ АЛГОРИТМ
+
+**Проблема:**
+```
+Какой порядок вычисления?
+C1 зависит от A1, B1, D1
+D1 зависит от E1
+```
+
+**Решение: Topological Ordering**
+
+**Определение:**
+```
+For each edge A → B:
+Node B appears BEFORE Node A in ordering
+
+Complexity: O(V + E)
+V = vertices (cells)
+E = edges (dependencies)
+```
+
+**Применение к нашему графу:**
+```
+Исходный граф:
+E1 → D1 → C1
+A1 → C1
+B1 → C1
+
+Topological order:
+1. E1 (no dependencies)
+2. D1 (depends on E1)
+3. A1 (no dependencies)
+4. B1 (no dependencies)
+5. C1 (depends on A1, B1, D1)
+
+Порядок вычисления: E1 → D1 → A1 → B1 → C1 ✅
+```
+
+---
+
+### Cycle Detection
+
+**Пример цикла:**
+```
+C1 = A1 + B1 + D1
+D1 = B1 + C1  ← Цикл!
+```
+
+**Граф:**
+```
+    C1 ←─┐
+   ↓     │
+   D1 ───┘
+   
+Цикл: C1 → D1 → C1
+```
+
+**Обнаружение:**
+```
+Topological Sort правило нарушено:
+Node A is parent of Node B
+AND
+Node A is child of Node B
+→ CYCLE DETECTED!
+
+Action: Show error to user
+```
+
+---
+
+### Formula Parsing Architecture
+
+```
+┌─────────────────────────────────────┐
+│  User Input: "=A1+B1*SUM(C1:C10)"   │
+└─────────────────┬───────────────────┘
+                  ↓
+┌─────────────────────────────────────┐
+│  Dependency Resolver Module         │
+│  - DFS + Topological Sort           │
+│  - Detect cycles                    │
+│  - Return execution order           │
+└─────────────────┬───────────────────┘
+                  ↓
+          Execution Order:
+          C1, C2, ..., C10, A1, B1
+                  ↓
+┌─────────────────────────────────────┐
+│  Formula Parser                     │
+│  - Tokenize: "A1", "+", "B1", "*"  │
+│  - Parse tokens                     │
+│  - Execute operations               │
+│  - Algorithms: Shunting Yard, etc. │
+└─────────────────┬───────────────────┘
+                  ↓
+┌─────────────────────────────────────┐
+│  Function Mapping (Dynamic Import!) │
+│                                     │
+│  SUM → import('./functions/sum.js') │
+│  AVG → import('./functions/avg.js') │
+│  IF  → import('./functions/if.js')  │
+│                                     │
+│  Load only needed functions!        │
+└─────────────────┬───────────────────┘
+                  ↓
+          Calculate Result
+```
+
+**Ключевая оптимизация:**
+```javascript
+// Dynamic imports
+const functionMapping = {
+  SUM: () => import('./functions/sum.js'),
+  AVERAGE: () => import('./functions/average.js'),
+  IF: () => import('./functions/if.js')
+};
+
+// Load only when used
+if (token === 'SUM') {
+  const sumModule = await functionMapping.SUM();
+  result = sumModule.default(args);
+}
+```
+
+**Преимущества:**
+```
+✅ Load only используемые функции
+✅ Меньше initial bundle size
+✅ Code splitting автоматически
+```
+
+---
+
+## 7. 🗄️ State Management
+
+### Table State Structure
+
+```typescript
+interface TableState {
+  // Flattened map: "row-col" → Cell
+  cells: Map<string, TableCell>;
+}
+
+interface TableCell {
+  // User input: "=A1+B1"
+  formula: string;
+  
+  // Calculated result: 15
+  calculatedValue: number | string | null;
+  
+  // Type: date, number, string
+  type: CellType;
+  
+  // Formatting options (ENUM!)
+  formatting: FormattingOption[];
+}
+
+enum FormattingOption {
+  BOLD = 'BOLD',
+  ITALIC = 'ITALIC',
+  STRIKETHROUGH = 'STRIKETHROUGH',
+  // ...
+}
+```
+
+**Ключевые решения:**
+
+**1. Flattened Map:**
+```typescript
+// ✅ O(1) access
+const cell = state.cells.get(`${row}-${col}`);
+
+// ❌ Nested structure = O(n)
+const cell = state[row][col];
+```
+
+**2. Enum для форматирования:**
+```typescript
+// ✅ Независимость от реализации
+formatting: [FormattingOption.BOLD]
+
+// ❌ Зависимость от CSS классов
+className: 'text-bold' // Что если класс изменится?
+```
+
+**Почему Enum:**
+```
+Class names могут измениться
+→ Старые сохранённые файлы сломаются
+→ Нужен mapping старых → новых классов
+
+Enum стабилен
+→ Меняется только реализация
+→ Enum остаётся тем же
+→ Backward compatibility ✅
+```
+
+---
+
+### Event Flow
+
+```
+User edits cell
+    ↓
+Event bubbles to Table root
+    ↓
+Event Delegation (data-row, data-col)
+    ↓
+Determine which cell changed
+    ↓
+Fire onCellChange(row, col)
+    ↓
+Access state: tableState.cells.get(`${row}-${col}`)
+    ↓
+Get formula
+    ↓
+Dependency Resolver (Topological Sort)
+    ↓
+Formula Parser
+    ↓
+Execute calculations
+    ↓
+Update calculatedValue
+    ↓
+Soft write to DOM (update text only)
+```
+
+**Event Delegation:**
+```html
+<table data-table>
+  <tr data-row="1">
+    <td data-col="A">5</td>
+    <td data-col="B">10</td>
+  </tr>
+</table>
+```
+
+```typescript
+table.addEventListener('change', (e) => {
+  const cell = e.target.closest('[data-row][data-col]');
+  const row = cell.dataset.row;
+  const col = cell.dataset.col;
+  
+  onCellChange(row, col);
+});
+```
+
+---
+
+## 8. ⚡ Оптимизация
+
+### A. Network Performance
+
+**Не применимо! (Offline app)**
+```
+App должен работать offline
+→ Load resources 1 time
+→ No network optimization needed
+→ Focus on rendering + JS
+```
+
+---
+
+### B. Rendering Performance
+
+**1. Virtualization ✅**
+```
+Решено в секции 5
+```
+
+**2. Soft Write ✅**
+```
+Update text nodes only
+No full DOM re-render
+```
+
+**3. Absolute Positioning + Transform ✅**
+```
+No reflow
+GPU-accelerated
+```
+
+**4. CSS Naming Convention**
+```css
+/* ✅ Flat selectors */
+.cell { }
+.cell--bold { }
+
+/* ❌ Nested */
+.table .row .cell .text { }
+```
+
+**5. Minification**
+```
+JS + CSS minified
+Obvious, но нужно упомянуть
+```
+
+---
+
+### C. JavaScript Performance
+
+**1. Async Calculations ⭐**
+```typescript
+// Web Worker для вычислений
+const worker = new Worker('calculator.worker.js');
+
+worker.postMessage({
+  type: 'CALCULATE_DEPENDENCIES',
+  cells: cellsData
+});
+
+worker.onmessage = (e) => {
+  const results = e.data;
+  // Lazily update DOM
+  updateCells(results);
+};
+```
+
+**Почему Web Worker:**
+```
+Heavy calculations → Block UI thread
+Web Worker → Background thread
+→ UI responsive ✅
+```
+
+**Ограничения:**
+```
+❌ Can't pass DOM nodes
+❌ Can't modify DOM directly
+✅ Can pass data
+✅ Return data back
+```
+
+**2. Lazy DOM Updates**
+```typescript
+// Batch updates
+requestAnimationFrame(() => {
+  results.forEach(result => {
+    updateCell(result.row, result.col, result.value);
+  });
+});
+```
+
+---
+
+## 9. ♿ Accessibility
+
+### A. HTML5 Semantic Elements ⭐
+
+**Если возможно:**
+```html
+<!-- ✅ Best: Native table -->
+<table>
+  <thead>
+    <tr>
+      <th scope="col">A</th>
+      <th scope="col">B</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>5</td>
+      <td>=A1*2</td>
+    </tr>
+  </tbody>
+</table>
+```
+
+**Если сложный рендеринг:**
+```html
+<!-- Divs + ARIA -->
+<div role="grid">
+  <div role="rowgroup">
+    <div role="row">
+      <div role="columnheader">A</div>
+      <div role="columnheader">B</div>
+    </div>
+  </div>
+  <div role="rowgroup">
+    <div role="row">
+      <div role="gridcell">5</div>
+      <div role="gridcell">=A1*2</div>
+    </div>
+  </div>
+</div>
+```
+
+**Правило:**
+```
+HTML5 semantics accessible by default
+→ Use native <table> if possible
+→ Don't use ARIA if not needed
+→ ARIA only when divs required
+```
+
+---
+
+### B. REMs вместо Pixels
+
+```css
+/* User custom browser settings */
+.cell {
+  font-size: 1rem;   /* Scales with zoom */
+  padding: 0.5rem;
+}
+```
+
+---
+
+### C. Keyboard Navigation
+
+```
+Shortcuts required:
+- Arrow keys: Navigate cells
+- Tab: Next cell
+- Shift+Tab: Previous cell
+- Enter: Edit cell
+- Esc: Cancel edit
+- Ctrl+C: Copy
+- Ctrl+V: Paste
+- Ctrl+F: Search
+```
+
+---
+
+## 📊 Итоговая архитектура
+
+```
+┌─────────────────────────────────────────┐
+│         Google Sheets App               │
+├─────────────────────────────────────────┤
+│                                         │
+│  Rendering: DOM Elements ✅             │
+│  (Not Canvas)                           │
+│                                         │
+├─────────────────────────────────────────┤
+│                                         │
+│  Virtualization:                        │
+│  - Vertical: ✅ Required                │
+│  - Horizontal: ❌ Not needed            │
+│  - Buffer: 2 × page size                │
+│  - Soft write (reuse DOM)               │
+│                                         │
+├─────────────────────────────────────────┤
+│                                         │
+│  Dependencies:                          │
+│  - DAG (Directed Acyclic Graph)         │
+│  - Topological Sort ⭐                  │
+│  - Cycle detection                      │
+│  - DFS algorithm                        │
+│                                         │
+├─────────────────────────────────────────┤
+│                                         │
+│  Formula Parsing:                       │
+│  - Tokenization                         │
+│  - Dynamic function imports             │
+│  - Arithmetic operations                │
+│                                         │
+├─────────────────────────────────────────┤
+│                                         │
+│  State:                                 │
+│  - Flattened Map (O(1) access)          │
+│  - Enum для formatting                  │
+│  - Minimal state                        │
+│                                         │
+├─────────────────────────────────────────┤
+│                                         │
+│  Performance:                           │
+│  - Web Workers (calculations)           │
+│  - Absolute positioning + Transform     │
+│  - No reflow                            │
+│  - Offline-first                        │
+│                                         │
+└─────────────────────────────────────────┘
+```
+
+---
+
+## 🎓 Ключевые выводы
+
+### 1. **DOM vs Canvas — Trade-off**
+```
+Canvas: Performance ↑, Cost ↑, Accessibility ↓
+DOM: Performance ↓, Cost ↓, Accessibility ↑
+
+Выбор: DOM (cost-effective, standard)
+```
+
+### 2. **Virtualization — Only Vertical**
+```
+26,000 cells → Performance problem
+Vertical: ✅ (1000+ rows)
+Horizontal: ❌ (26-78 columns OK)
+→ Simplifies design!
+```
+
+### 3. **Soft Write > Hard Write**
+```
+Update text nodes only
+→ 10x faster
+→ No reflow
+```
+
+### 4. **Topological Sort ⭐**
+```
+Dependency resolution
+Cycle detection
+Execution order
+→ O(V + E) complexity
+```
+
+### 5. **Web Workers для тяжёлых вычислений**
+```
+Background thread
+UI не блокируется
+Critical для UX
+```
+
+### 6. **Absolute + Transform**
+```
+No reflow
+GPU-accelerated
+Smooth scrolling
+```
+
+---
+
+**Время выполнения:** ~60 минут  
+**Уровень:** Senior/Staff Frontend Engineer  
+**Компании:** Google, Microsoft, Notion, Airtable
+
+Удачи на интервью! 📊🚀

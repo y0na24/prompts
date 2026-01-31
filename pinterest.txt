@@ -1,0 +1,1899 @@
+# Frontend System Design: Pinterest (Masonry Layout)
+
+## 📋 Введение
+
+Добро пожаловать на урок по системному дизайну для фронтенд-инженеров. Сегодня мы рассмотрим проектирование Pinterest — популярной платформы для обмена изображениями с уникальным **Masonry Layout** (каменная кладка).
+
+**Что такое Pinterest?**
+- Приложение для обмена изображениями в виде "пинов" (pins)
+- Карточки разной высоты
+- Особая сетка — Masonry Layout (Masonry Grid)
+- Бесконечная прокрутка с подгрузкой новых пинов
+
+**Уровень сложности:** Middle/Senior Frontend Engineer  
+**Время:** ~45-60 минут (на интервью фокус на 1-2 темах)  
+**Компании:** Pinterest, Instagram, Google Images
+
+---
+
+## 📝 План системного дизайна
+
+1. ✅ **Общие требования (General Requirements)**
+2. ✅ **Функциональные требования (Functional Requirements)**
+3. ✅ **Архитектура компонентов (Components Architecture)**
+4. ✅ **Masonry Layout — ключевая особенность!**
+5. ✅ **Модели данных (Data Entities)**
+6. ✅ **API данных (Data API)**
+7. ✅ **Хранилище данных и слои (Data Store & Layers)**
+8. ✅ **Оптимизация (Optimization)**
+9. ✅ **Доступность (Accessibility)**
+
+---
+
+## 1. 📌 Общие требования
+
+### Основной функционал:
+
+1. **Masonry Layout**
+   - Пины размещаются в формате каменной кладки
+   - Карточки разной высоты
+   - Адаптивная сетка (2-8 колонок в зависимости от viewport)
+
+2. **Взаимодействие с пинами**
+   - При наведении (hover) — показ меню действий
+   - Клик — открытие полной информации о пине
+   - Просмотр деталей с комментариями
+
+3. **Типы контента**
+   - Изображения (JPG, PNG, WebP)
+   - GIF анимации
+   - ❌ НЕТ видео (упрощение для интервью)
+
+4. **Социальные функции**
+   - Комментарии к пинам
+   - Шеринг (поделиться)
+   - Лайки
+
+> **Примечание:** На интервью вас могут попросить сфокусироваться только на Masonry Layout — это самая важная и сложная часть!
+
+---
+
+## 2. 🎯 Функциональные требования
+
+### Браузеры и платформы:
+
+**Поддержка браузеров:**
+- ✅ 95% современных браузеров
+- ✅ Chrome, Firefox, Safari, Edge
+- ❌ НЕТ поддержки IE11
+
+> Если бы это было Electron-приложение, мы могли бы забыть о compatibility issues!
+
+### Устройства:
+
+**Поддержка широкого спектра устройств:**
+- 📱 Смартфоны (iPhone, Android)
+- 📱 Планшеты (iPad)
+- 💻 Десктопы
+- 🖥️ Большие экраны
+
+**Адаптивный дизайн:**
+- Mobile: 1-2 колонки
+- Tablet: 2-4 колонки
+- Desktop: 4-8 колонок
+
+### Дополнительные требования:
+
+**Offline режим (PWA):**
+- Кэширование загруженных пинов
+- Доступ без интернета к просмотренным ранее
+- Progressive Web App функционал
+
+**Работа при плохом интернете:**
+- Оптимизация для медленных соединений
+- Постепенная загрузка изображений
+- Адаптивное качество
+
+---
+
+## 3. 🏗️ Архитектура компонентов
+
+### Структура Pin (пина):
+
+```
+Pin (Карточка)
+├── При наведении (hover):
+│   ├── Picture (изображение)
+│   ├── Menu (меню действий)
+│   │   ├── Link (ссылка)
+│   │   └── Share (поделиться)
+│   └── Dropdown (дополнительные действия)
+│
+└── При клике — Modal с деталями:
+    ├── Picture (то же изображение)
+    ├── Details (описание, автор, дата)
+    └── Comments Section
+        ├── CommentList
+        │   ├── Comment × N
+        │   └── ShowMoreButton
+        └── CommentInput (без медиа)
+```
+
+### Иерархия компонентов (Dependency Graph):
+
+```
+App Root
+└── Router
+    ├── Header
+    ├── HomeControls
+    ├── ProfileControls
+    └── PinsFeedPage ⭐ (главная страница)
+        └── PinsGrid (Masonry Layout)
+            └── Pin × N
+                ├── PinControls
+                ├── PinMenu
+                ├── PinPicture
+                └── PinDetails (Modal)
+                    ├── PinPicture
+                    ├── PinDetails
+                    └── PinComments
+                        ├── CommentList
+                        │   └── Comment × N
+                        └── CommentInput
+```
+
+**Зачем нужен Dependency Graph?**
+- Понимание потока данных
+- Планирование архитектуры state management
+- Определение точек загрузки данных
+- Оптимизация ре-рендеров
+
+### Пример React компонентов:
+
+```tsx
+// PinsFeedPage.tsx
+import React from 'react';
+import { PinsGrid } from './PinsGrid';
+
+export const PinsFeedPage: React.FC = () => {
+  return (
+    <div className="pins-feed-page">
+      <PinsGrid />
+    </div>
+  );
+};
+```
+
+```tsx
+// PinsGrid.tsx
+import React, { useState, useEffect } from 'react';
+import { Pin } from './Pin';
+import { useMasonryLayout } from '../hooks/useMasonryLayout';
+
+export const PinsGrid: React.FC = () => {
+  const [pins, setPins] = useState<number[]>([]);
+  const { gridRef, columns, positions } = useMasonryLayout();
+
+  useEffect(() => {
+    fetchInitialPins();
+  }, []);
+
+  return (
+    <div ref={gridRef} className="masonry-grid">
+      {pins.map((pinId, index) => (
+        <Pin 
+          key={pinId} 
+          pinId={pinId}
+          position={positions[index]}
+        />
+      ))}
+    </div>
+  );
+};
+```
+
+```tsx
+// Pin.tsx
+import React, { useState } from 'react';
+import { PinControls } from './PinControls';
+import { PinMenu } from './PinMenu';
+import { PinPicture } from './PinPicture';
+import { PinDetailsModal } from './PinDetailsModal';
+
+interface PinProps {
+  pinId: number;
+  position: { top: number; left: number };
+}
+
+export const Pin: React.FC<PinProps> = ({ pinId, position }) => {
+  const [isHovered, setIsHovered] = useState(false);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+
+  const pin = useSelector(state => state.pins.byId[pinId]);
+
+  return (
+    <>
+      <div
+        className="pin"
+        style={{
+          position: 'absolute',
+          top: position.top,
+          left: position.left,
+          transform: `translate3d(0, 0, 0)` // GPU acceleration
+        }}
+        onMouseEnter={() => setIsHovered(true)}
+        onMouseLeave={() => setIsHovered(false)}
+        onClick={() => setIsModalOpen(true)}
+      >
+        <PinPicture src={pin.imageUrl} alt={pin.title} />
+        
+        {isHovered && (
+          <>
+            <PinMenu pinId={pinId} />
+            <PinControls pinId={pinId} />
+          </>
+        )}
+      </div>
+
+      {isModalOpen && (
+        <PinDetailsModal 
+          pinId={pinId}
+          onClose={() => setIsModalOpen(false)}
+        />
+      )}
+    </>
+  );
+};
+```
+
+---
+
+## 4. 🧱 Masonry Layout — Ключевая Особенность!
+
+> **Это самая важная и сложная часть Pinterest!** На интервью часто просят сфокусироваться именно на этом.
+
+### Что такое Masonry Layout?
+
+**Проблема:**
+- Карточки (пины) имеют разную высоту
+- Нужно эффективно разместить их без больших пустых пространств
+- Стандартный CSS Grid не подходит (фиксированная высота строк)
+
+**Решение: Masonry (каменная кладка)**
+- Элементы размещаются в колонках
+- Новый элемент добавляется в самую короткую колонку
+- Создается эффект "каменной кладки"
+
+---
+
+### Зоны и концепции
+
+```
+┌─────────────────────────────────────────────┐
+│          BROWSER WINDOW                     │
+│                                             │
+│  ┌─ Top Sentinel ─────────────────────┐   │
+│  │                                      │   │
+│  │  ╔══════════╗  ╔══════════╗         │   │ ← Visible Zone
+│  │  ║  Pin 1   ║  ║  Pin 2   ║         │   │   (Viewport)
+│  │  ║  (400px) ║  ║  (600px) ║         │   │
+│  │  ╚══════════╝  ╚══════════╝         │   │
+│  │  ╔══════════╗  ╔══════════╗         │   │
+│  │  ║  Pin 3   ║  ║  Pin 4   ║         │   │
+│  │  ║  (500px) ║  ║  (350px) ║         │   │
+│  │  ╚══════════╝  ╚══════════╝         │   │
+│  ├──────────────────────────────────────┤   │
+│  │  ╔══════════╗  ╔══════════╗         │   │ ← Invisible Zone
+│  │  ║  Pin 5   ║  ║  Pin 6   ║         │   │   (Rendered but not visible)
+│  │  ╚══════════╝  ╚══════════╝         │   │
+│  │  ╔══════════╗  ╔══════════╗         │   │
+│  │  ║  Pin 7   ║  ║  Pin 8   ║         │   │
+│  │  ╚══════════╝  ╚══════════╝         │   │
+│  └─ Bottom Sentinel ──────────────────┘   │
+│                                             │
+│  ┌───────────────────────────────────┐     │
+│  │     Recycle Zone                  │     │ ← Future Data
+│  │  (Canvas увеличивается,           │     │   (Not rendered,
+│  │   но НЕ рендерится!)              │     │    just reserved space)
+│  └───────────────────────────────────┘     │
+│                                             │
+└─────────────────────────────────────────────┘
+```
+
+### Ключевые зоны:
+
+1. **Visible Zone (Viewport)**
+   - Что пользователь видит сейчас
+   - Пины полностью отрендерены
+
+2. **Invisible Zone**
+   - Пины отрендерены в DOM
+   - Но не видны пользователю
+   - Готовы к быстрому показу при скролле
+
+3. **Recycle Zone (Будущие данные)**
+   - Данные загружены
+   - Canvas увеличен на их размер
+   - НО пины НЕ отрендерены в DOM!
+   - Экономия памяти
+
+4. **Top/Bottom Sentinels**
+   - Маркеры начала и конца контента
+   - Используются с Intersection Observer
+   - Триггеры для загрузки новых данных
+
+---
+
+### Пошаговая работа Masonry Layout
+
+#### Шаг 1: Начальная загрузка
+
+```
+State:
+- Loaded: Pin 1-8
+- Rendered: Pin 1-8
+- Visible: Pin 1-4 (зависит от viewport)
+
+Grid: 2 columns
+┌──────────┬──────────┐
+│  Pin 1   │  Pin 2   │
+│ (400px)  │ (600px)  │
+├──────────┼──────────┤
+│  Pin 3   │  Pin 4   │
+│ (500px)  │ (350px)  │
+├──────────┼──────────┤
+│  Pin 5   │  Pin 6   │
+├──────────┼──────────┤
+│  Pin 7   │  Pin 8   │
+└──────────┴──────────┘
+       ↑
+   Bottom Sentinel
+```
+
+#### Шаг 2: Скролл вниз (без пересечения Sentinel)
+
+```
+User scrolls down slightly
+- Visible Zone moves down
+- No intersection with Bottom Sentinel yet
+- No action needed
+```
+
+#### Шаг 3: Пересечение Bottom Sentinel — ЗАГРУЗКА!
+
+```
+INTERSECTION DETECTED!
+Action: Load Pin 9-10, Remove Pin 1-2 from DOM
+
+Sliding Window (двусторонняя очередь):
+Before: [Pin1, Pin2, Pin3, Pin4, Pin5, Pin6, Pin7, Pin8]
+         ↓ pop(2)          ↓ push(2)
+After:  [Pin3, Pin4, Pin5, Pin6, Pin7, Pin8, Pin9, Pin10]
+
+New Grid:
+┌──────────┬──────────┐
+│  Pin 3   │  Pin 4   │ ← Top Sentinel MOVED UP
+│ (500px)  │ (350px)  │
+├──────────┼──────────┤
+│  Pin 5   │  Pin 6   │
+├──────────┼──────────┤
+│  Pin 7   │  Pin 8   │
+├──────────┼──────────┤
+│  Pin 9   │  Pin 10  │ ← NEW
+│ (450px)  │ (550px)  │
+└──────────┴──────────┘
+       ↑
+   Bottom Sentinel MOVED DOWN
+```
+
+**Почему убираем только Pin 1-2, а не Pin 3-4?**
+- Pin 3-4 близко к viewport
+- Если пользователь быстро прокрутит назад, они уже есть
+- Избегаем лишних ре-рендеров при "дрожащем" скролле
+
+---
+
+### Абсолютное позиционирование (Absolute Canvas)
+
+**Проблема:** Вставка/удаление DOM элементов = ДОРОГО! 💰
+
+**Решение:** Не удаляем, а ПЕРЕМЕЩАЕМ существующие ноды!
+
+```css
+.masonry-grid {
+  position: relative;
+  /* Flexbox для расчета колонок */
+  display: flex;
+  flex-direction: row;
+}
+
+.pin {
+  position: absolute;
+  /* GPU-accelerated transform */
+  transform: translate3d(0, 0, 0);
+  will-change: transform;
+}
+```
+
+#### Расчет позиций:
+
+```typescript
+// Пример для 2-колоночной сетки
+
+interface Position {
+  top: number;
+  left: number;
+  columnIndex: number;
+}
+
+// Начальные позиции
+Pin 1: { top: 0,    left: 0,       column: 0 }
+Pin 2: { top: 0,    left: 340px,   column: 1 }
+
+// Следующий ряд — позиция = предыдущий PIN из той же колонки + его высота + margin
+Pin 3: { 
+  top: Pin1.top + Pin1.height + MARGIN,  // 0 + 400 + 16 = 416px
+  left: 0,
+  column: 0
+}
+
+Pin 4: {
+  top: Pin2.top + Pin2.height + MARGIN,  // 0 + 600 + 16 = 616px
+  left: 340px,
+  column: 1
+}
+
+// Pin 5 — выбираем колонку с минимальной высотой!
+columnHeights = [416 + 500, 616 + 350] = [916, 966]
+minColumn = 0 (916 < 966)
+
+Pin 5: {
+  top: 916px,
+  left: 0,
+  column: 0
+}
+```
+
+**Формула:**
+```
+position.top = previousInColumn.top + previousInColumn.height + MARGIN
+position.left = columnIndex * (PIN_WIDTH + MARGIN)
+```
+
+---
+
+### Почему это работает для разной высоты?
+
+```
+Column 0          Column 1
+┌─────────┐      ┌─────────┐
+│ Pin 1   │      │ Pin 2   │
+│ (400px) │      │ (600px) │ ← Длиннее
+└─────────┘      │         │
+┌─────────┐      └─────────┘
+│ Pin 3   │      ┌─────────┐
+│ (500px) │      │ Pin 4   │
+│         │      │ (350px) │
+└─────────┘      └─────────┘
+                 ┌─────────┐
+                 │ Pin 6   │
+                 │ (400px) │
+┌─────────┐      └─────────┘
+│ Pin 5   │
+│ (700px) │
+│         │
+│         │
+└─────────┘
+
+Высоты колонок: [1600px, 1350px]
+Следующий пин → Column 1 (короче)
+```
+
+**Алгоритм:**
+1. Вычисляем текущую высоту каждой колонки
+2. Новый пин добавляем в самую короткую
+3. Позиция = `columnHeights[shortestColumn]`
+4. Обновляем высоту этой колонки
+
+---
+
+### Реализация Masonry Layout
+
+```typescript
+// hooks/useMasonryLayout.ts
+
+interface MasonryConfig {
+  columnWidth: number;
+  gutter: number;
+  containerWidth: number;
+}
+
+interface PinPosition {
+  top: number;
+  left: number;
+  column: number;
+}
+
+export const useMasonryLayout = (config: MasonryConfig) => {
+  const [columnHeights, setColumnHeights] = useState<number[]>([]);
+  const [positions, setPositions] = useState<PinPosition[]>([]);
+
+  // Вычисляем количество колонок
+  const columnCount = Math.floor(
+    (config.containerWidth + config.gutter) / 
+    (config.columnWidth + config.gutter)
+  );
+
+  // Инициализация колонок
+  useEffect(() => {
+    setColumnHeights(new Array(columnCount).fill(0));
+  }, [columnCount]);
+
+  const calculatePosition = (pinHeight: number): PinPosition => {
+    // Находим самую короткую колонку
+    const shortestColumnIndex = columnHeights.indexOf(
+      Math.min(...columnHeights)
+    );
+
+    const position: PinPosition = {
+      top: columnHeights[shortestColumnIndex],
+      left: shortestColumnIndex * (config.columnWidth + config.gutter),
+      column: shortestColumnIndex
+    };
+
+    // Обновляем высоту колонки
+    const newHeights = [...columnHeights];
+    newHeights[shortestColumnIndex] += pinHeight + config.gutter;
+    setColumnHeights(newHeights);
+
+    return position;
+  };
+
+  return { calculatePosition, positions, columnCount };
+};
+```
+
+```typescript
+// components/MasonryGrid.tsx
+
+import React, { useRef, useEffect, useState } from 'react';
+import { Pin } from './Pin';
+
+export const MasonryGrid: React.FC = () => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [containerWidth, setContainerWidth] = useState(0);
+  const [pins, setPins] = useState<PinData[]>([]);
+
+  const PIN_WIDTH = 236;
+  const GUTTER = 16;
+
+  const { calculatePosition } = useMasonryLayout({
+    columnWidth: PIN_WIDTH,
+    gutter: GUTTER,
+    containerWidth
+  });
+
+  // Измеряем ширину контейнера
+  useEffect(() => {
+    const updateWidth = () => {
+      if (containerRef.current) {
+        setContainerWidth(containerRef.current.offsetWidth);
+      }
+    };
+
+    updateWidth();
+    window.addEventListener('resize', updateWidth);
+    return () => window.removeEventListener('resize', updateWidth);
+  }, []);
+
+  // Рендерим пины с абсолютным позиционированием
+  return (
+    <div 
+      ref={containerRef}
+      className="masonry-container"
+      style={{ position: 'relative' }}
+    >
+      {pins.map((pin) => {
+        const position = calculatePosition(pin.height);
+        
+        return (
+          <Pin
+            key={pin.id}
+            pin={pin}
+            style={{
+              position: 'absolute',
+              top: `${position.top}px`,
+              left: `${position.left}px`,
+              width: `${PIN_WIDTH}px`,
+              transform: 'translate3d(0, 0, 0)', // GPU acceleration
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+};
+```
+
+---
+
+### Виртуализация с Sliding Window
+
+```typescript
+// hooks/useSlidingWindow.ts
+
+interface SlidingWindowConfig {
+  windowSize: number; // Сколько пинов держать в DOM
+  overscan: number;   // Дополнительные пины сверху/снизу
+}
+
+export const useSlidingWindow = (
+  allPins: number[],
+  config: SlidingWindowConfig
+) => {
+  const [visibleRange, setVisibleRange] = useState({ start: 0, end: config.windowSize });
+  const [topPadding, setTopPadding] = useState(0);
+  const [bottomPadding, setBottomPadding] = useState(0);
+
+  const handleScroll = (scrollTop: number, viewportHeight: number) => {
+    // Вычисляем какие пины должны быть видны
+    const firstVisibleIndex = Math.floor(scrollTop / AVERAGE_PIN_HEIGHT);
+    const lastVisibleIndex = Math.ceil(
+      (scrollTop + viewportHeight) / AVERAGE_PIN_HEIGHT
+    );
+
+    // Добавляем overscan
+    const start = Math.max(0, firstVisibleIndex - config.overscan);
+    const end = Math.min(
+      allPins.length,
+      lastVisibleIndex + config.overscan
+    );
+
+    setVisibleRange({ start, end });
+
+    // Вычисляем padding для создания иллюзии полного списка
+    setTopPadding(start * AVERAGE_PIN_HEIGHT);
+    setBottomPadding((allPins.length - end) * AVERAGE_PIN_HEIGHT);
+  };
+
+  // Видимые пины (Sliding Window)
+  const visiblePins = allPins.slice(visibleRange.start, visibleRange.end);
+
+  return {
+    visiblePins,
+    topPadding,
+    bottomPadding,
+    handleScroll
+  };
+};
+```
+
+```tsx
+// Использование
+export const VirtualizedMasonryGrid: React.FC = () => {
+  const [allPinIds, setAllPinIds] = useState<number[]>([]);
+  const { visiblePins, topPadding, bottomPadding, handleScroll } = useSlidingWindow(
+    allPinIds,
+    { windowSize: 50, overscan: 10 }
+  );
+
+  return (
+    <div 
+      className="virtualized-masonry"
+      onScroll={(e) => handleScroll(e.currentTarget.scrollTop, e.currentTarget.clientHeight)}
+    >
+      {/* Top padding - создает эффект контента сверху */}
+      <div style={{ height: `${topPadding}px` }} />
+
+      {/* Только видимые пины */}
+      <div className="masonry-container">
+        {visiblePins.map(pinId => (
+          <Pin key={pinId} pinId={pinId} />
+        ))}
+      </div>
+
+      {/* Bottom padding - резервирует место снизу */}
+      <div style={{ height: `${bottomPadding}px` }} />
+    </div>
+  );
+};
+```
+
+---
+
+### Оптимизация производительности Masonry
+
+#### 1. GPU Acceleration
+
+```css
+.pin {
+  /* Используем transform вместо top/left для анимаций */
+  transform: translate3d(0, 0, 0);
+  
+  /* Подсказка браузеру о будущих изменениях */
+  will-change: transform;
+  
+  /* Создаем новый слой композитинга */
+  transform-style: preserve-3d;
+}
+```
+
+**Почему это важно?**
+- `top`/`left` триггерят **Layout** (reflow) — ДОРОГО! 💰
+- `transform` работает на **Composite** слое — ДЕШЕВО! ✅
+- Браузер только перерисовывает пиксели, не пересчитывает layout
+
+#### 2. Intersection Observer для загрузки
+
+```typescript
+// hooks/useInfiniteScroll.ts
+
+export const useInfiniteScroll = (onLoadMore: () => void) => {
+  const sentinelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          onLoadMore();
+        }
+      },
+      {
+        root: null,
+        rootMargin: '200px', // Загружаем за 200px до конца
+        threshold: 0.1
+      }
+    );
+
+    observer.observe(sentinel);
+
+    return () => observer.disconnect();
+  }, [onLoadMore]);
+
+  return { sentinelRef };
+};
+```
+
+```tsx
+// Использование
+export const MasonryGrid: React.FC = () => {
+  const { sentinelRef } = useInfiniteScroll(() => {
+    loadMorePins();
+  });
+
+  return (
+    <div className="masonry-grid">
+      {/* Пины */}
+      
+      {/* Bottom Sentinel */}
+      <div ref={sentinelRef} style={{ height: '1px' }} />
+    </div>
+  );
+};
+```
+
+---
+
+### Скролл вверх (обратное направление)
+
+```
+User scrolls UP
+Current window: [Pin3, Pin4, ..., Pin10]
+
+Action: Load Pin1-2, Remove Pin9-10
+
+Sliding Window operation:
+Before: [Pin3, Pin4, Pin5, Pin6, Pin7, Pin8, Pin9, Pin10]
+         ↓ unshift(2)      ↓ pop(2)
+After:  [Pin1, Pin2, Pin3, Pin4, Pin5, Pin6, Pin7, Pin8]
+
+Updates:
+- Top Sentinel MOVED DOWN (больше контента сверху)
+- Bottom Sentinel MOVED UP (меньше контента снизу)
+- Top Padding DECREASED
+- Bottom Padding INCREASED
+```
+
+---
+
+## 5. 📊 Модели данных (Data Entities)
+
+```typescript
+// types/pin.ts
+
+/**
+ * Основная модель пина
+ */
+interface Pin {
+  id: number;
+  origin: PinBoard;      // Источник (доска)
+  title: string;
+  description: string;
+  imageUrl: string;
+  author: number;        // User ID
+  width: number;         // Оригинальная ширина
+  height: number;        // Оригинальная высота
+  aspectRatio: number;   // width / height
+  createdAt: number;     // timestamp
+  likesCount: number;
+  commentsCount: number;
+  sharesCount: number;
+}
+
+/**
+ * Доска (источник пинов)
+ */
+interface PinBoard {
+  id: number;
+  name: string;
+  description: string;
+  coverImage: string;
+  pinsCount: number;
+}
+
+/**
+ * Комментарий
+ */
+interface Comment {
+  id: number;
+  pinId: number;
+  authorId: number;      // User ID
+  content: string;
+  createdAt: number;     // timestamp
+  likesCount: number;
+}
+
+/**
+ * Пользователь
+ */
+interface User {
+  id: number;
+  nickname: string;
+  avatar: string;
+  verified: boolean;
+}
+```
+
+---
+
+## 6. 🔌 API данных
+
+### REST Endpoints:
+
+```typescript
+// api/types.ts
+
+interface GetPinsParams {
+  apiKey: string;
+  userId: number;
+  cursor?: number;         // timestamp для пагинации
+  pageSize?: number;       // количество пинов (default: 20)
+  minId?: number;          // для загрузки новых (если есть 1000, загрузим 1001+)
+  includeComments?: boolean; // загружать ли комментарии сразу
+  boardId?: number;        // загрузка с конкретной доски (опционально)
+}
+
+interface GetPinsResponse {
+  pins: Pin[];
+  cursor: number;          // для следующей загрузки
+  hasMore: boolean;
+}
+
+interface GetCommentsParams {
+  apiKey: string;
+  pinId: number;
+  pageSize?: number;
+}
+
+interface GetCommentsResponse {
+  comments: Comment[];
+  hasMore: boolean;
+}
+```
+
+### API Service:
+
+```typescript
+// services/pinterestAPI.ts
+
+class PinterestAPI {
+  private baseURL = 'https://api.pinterest.com/v1';
+  private apiKey: string;
+
+  constructor(apiKey: string) {
+    this.apiKey = apiKey;
+  }
+
+  /**
+   * Получение пинов
+   */
+  async getPins(params: GetPinsParams): Promise<GetPinsResponse> {
+    const queryParams = new URLSearchParams({
+      apiKey: this.apiKey,
+      userId: params.userId.toString(),
+      cursor: params.cursor?.toString() || Date.now().toString(),
+      pageSize: params.pageSize?.toString() || '20',
+      ...(params.minId && { minId: params.minId.toString() }),
+      ...(params.includeComments && { includeComments: 'true' }),
+      ...(params.boardId && { boardId: params.boardId.toString() })
+    });
+
+    const response = await fetch(`${this.baseURL}/pins?${queryParams}`);
+    return await response.json();
+  }
+
+  /**
+   * Получение комментариев к пину
+   */
+  async getComments(params: GetCommentsParams): Promise<GetCommentsResponse> {
+    const queryParams = new URLSearchParams({
+      apiKey: this.apiKey,
+      pinId: params.pinId.toString(),
+      pageSize: params.pageSize?.toString() || '20'
+    });
+
+    const response = await fetch(`${this.baseURL}/comments?${queryParams}`);
+    return await response.json();
+  }
+}
+
+export const pinterestAPI = new PinterestAPI(process.env.API_KEY!);
+```
+
+---
+
+## 7. 🗄️ Хранилище данных и слои (Data Store & Layers)
+
+### Архитектура слоев данных:
+
+```
+┌─────────────────────────────────────────┐
+│         PinsFeedPage (Component)        │
+│              ↓ FETCH                    │
+│         ┌─────────────┐                 │
+│         │  getPins()  │ API Call        │
+│         └─────────────┘                 │
+│              ↓                           │
+│    ┌──────────────────────┐             │
+│    │ Normalize & Store    │             │
+│    └──────────────────────┘             │
+│              ↓                           │
+├─────────────────────────────────────────┤
+│         NORMALIZED STORE                │
+├─────────────────────────────────────────┤
+│  pins: {                                │
+│    byId: { [pinId]: Pin }               │
+│    allIds: number[]                     │
+│  }                                      │
+│                                         │
+│  users: {                               │
+│    byId: { [userId]: User }             │
+│  }                                      │
+│                                         │
+│  comments: {                            │
+│    byPinId: {                          │
+│      [pinId]: Comment[]                │
+│    }                                    │
+│  }                                      │
+│                                         │
+│  boards: {                              │
+│    byId: { [boardId]: PinBoard }        │
+│  }                                      │
+└─────────────────────────────────────────┘
+         ↓ ACCESS by ID
+┌─────────────────────────────────────────┐
+│        PinsGrid (Component)             │
+│   pins.allIds → [1, 2, 3, ...]          │
+│         ↓ map(id => pins.byId[id])      │
+│       Pin Component                     │
+└─────────────────────────────────────────┘
+```
+
+### Redux Store Implementation:
+
+```typescript
+// store/slices/pinsSlice.ts
+
+import { createSlice, PayloadAction } from '@reduxjs/toolkit';
+
+interface PinsState {
+  byId: Record<number, Pin>;
+  allIds: number[];
+  isLoading: boolean;
+  error: string | null;
+}
+
+const initialState: PinsState = {
+  byId: {},
+  allIds: [],
+  isLoading: false,
+  error: null
+};
+
+const pinsSlice = createSlice({
+  name: 'pins',
+  initialState,
+  reducers: {
+    addPins(state, action: PayloadAction<Pin[]>) {
+      action.payload.forEach(pin => {
+        if (!state.byId[pin.id]) {
+          state.byId[pin.id] = pin;
+          state.allIds.push(pin.id);
+        }
+      });
+    },
+    
+    updatePin(state, action: PayloadAction<{ id: number; changes: Partial<Pin> }>) {
+      const { id, changes } = action.payload;
+      if (state.byId[id]) {
+        state.byId[id] = { ...state.byId[id], ...changes };
+      }
+    },
+
+    setLoading(state, action: PayloadAction<boolean>) {
+      state.isLoading = action.payload;
+    }
+  }
+});
+
+export const { addPins, updatePin, setLoading } = pinsSlice.actions;
+export default pinsSlice.reducer;
+```
+
+### Преимущества нормализованного store:
+
+```typescript
+// ❌ Плохо: Вложенная структура
+const badStore = {
+  pins: [
+    {
+      id: 1,
+      author: { id: 10, name: 'John' },
+      board: { id: 100, name: 'Travel' },
+      comments: [
+        { id: 1001, author: { id: 20, name: 'Jane' } }
+      ]
+    }
+  ]
+};
+// Проблемы:
+// - Дублирование (John может быть автором многих пинов)
+// - Сложность обновления (нужно искать по массивам)
+// - Неэффективно O(n)
+
+// ✅ Хорошо: Нормализованная структура
+const goodStore = {
+  pins: {
+    byId: {
+      1: { id: 1, authorId: 10, boardId: 100, commentIds: [1001] }
+    },
+    allIds: [1]
+  },
+  users: {
+    byId: {
+      10: { id: 10, name: 'John' },
+      20: { id: 20, name: 'Jane' }
+    }
+  },
+  boards: {
+    byId: {
+      100: { id: 100, name: 'Travel' }
+    }
+  },
+  comments: {
+    byId: {
+      1001: { id: 1001, authorId: 20, content: '...' }
+    }
+  }
+};
+// Преимущества:
+// - O(1) доступ
+// - Нет дублирования
+// - Простое обновление
+```
+
+---
+
+## 8. ⚡ Оптимизация
+
+### A. Производительность сети (Network Performance)
+
+#### 1. Сжатие ресурсов
+
+```nginx
+# nginx.conf
+
+# Gzip сжатие (40-50% экономии)
+gzip on;
+gzip_vary on;
+gzip_min_length 1024;
+gzip_types
+  text/css
+  text/javascript
+  application/javascript
+  application/json
+  image/svg+xml;
+
+# Brotli сжатие (10-20% лучше Gzip!)
+brotli on;
+brotli_comp_level 6;
+brotli_types text/css application/javascript;
+```
+
+#### 2. HTTP/2
+
+**Почему HTTP/2 важен для Pinterest:**
+
+```
+HTTP/1.1:
+- Максимум 5-6 параллельных соединений
+- Нужно объединять все в один bundle
+- Медленная загрузка множества изображений
+
+HTTP/2:
+- Multiplexing — 100+ ресурсов параллельно!
+- Можно грузить каждое изображение отдельно
+- Code splitting эффективен
+```
+
+#### 3. Code Splitting
+
+```typescript
+// webpack.config.js
+
+module.exports = {
+  optimization: {
+    splitChunks: {
+      chunks: 'all',
+      cacheGroups: {
+        vendor: {
+          test: /[\\/]node_modules[\\/]/,
+          name: 'vendors',
+          priority: 10
+        },
+        pinsGrid: {
+          test: /[\\/]src[\\/]components[\\/]PinsGrid/,
+          name: 'pins-grid',
+          priority: 5
+        },
+        analytics: {
+          test: /[\\/]analytics[\\/]/,
+          name: 'analytics',
+          priority: 1
+        }
+      }
+    }
+  }
+};
+```
+
+**Результат:**
+- `vendors.bundle.js` (React, Redux) — кэшируется надолго
+- `pins-grid.bundle.js` — основной функционал
+- `analytics.bundle.js` — загружается позже
+
+#### 4. Оптимизация изображений — КЛЮЧЕВОЕ!
+
+**Проблема:** Pinterest = 90% изображений!
+
+**Решение: Image Optimization Service**
+
+```
+User Request
+     ↓
+┌─────────────────────────────────┐
+│  Client (знает viewport)        │
+│  viewport: 375px (mobile)       │
+│  dpr: 2 (retina)                │
+└─────────────────────────────────┘
+     ↓ Request optimized image
+┌─────────────────────────────────┐
+│  CDN Cache                      │
+│  Check: cached version exists?  │
+└─────────────────────────────────┘
+     ↓ Cache MISS
+┌─────────────────────────────────┐
+│  Image Optimization Service     │
+│  1. Resize: 375 × 2 = 750px     │
+│  2. Format: WebP                │
+│  3. Quality: 85                 │
+│  4. Compress                    │
+└─────────────────────────────────┘
+     ↓ Return + Cache in CDN
+┌─────────────────────────────────┐
+│  Client receives optimized      │
+│  Size: 50KB instead of 500KB!   │
+└─────────────────────────────────┘
+```
+
+```typescript
+// services/imageOptimization.ts
+
+interface ImageOptions {
+  width: number;
+  quality?: number;
+  format?: 'webp' | 'jpeg' | 'png';
+}
+
+class ImageOptimizationService {
+  private cdnBaseUrl = 'https://cdn.pinterest.com';
+
+  getOptimizedUrl(originalUrl: string, options: ImageOptions): string {
+    const params = new URLSearchParams({
+      url: originalUrl,
+      w: options.width.toString(),
+      q: (options.quality || 85).toString(),
+      f: options.format || 'webp'
+    });
+
+    return `${this.cdnBaseUrl}/transform?${params}`;
+  }
+
+  /**
+   * Адаптивное изображение на основе viewport
+   */
+  getResponsiveUrl(originalUrl: string): string {
+    const viewport = window.innerWidth;
+    const dpr = window.devicePixelRatio || 1;
+
+    // Определяем ширину пина на текущем viewport
+    let pinWidth: number;
+    if (viewport < 600) {
+      pinWidth = viewport - 32; // Mobile: full width - padding
+    } else if (viewport < 900) {
+      pinWidth = (viewport - 48) / 2; // Tablet: 2 columns
+    } else {
+      pinWidth = 236; // Desktop: fixed width
+    }
+
+    const actualWidth = Math.ceil(pinWidth * dpr);
+
+    return this.getOptimizedUrl(originalUrl, {
+      width: actualWidth,
+      format: this.supportsWebP() ? 'webp' : 'jpeg'
+    });
+  }
+
+  private supportsWebP(): boolean {
+    const canvas = document.createElement('canvas');
+    return canvas.toDataURL('image/webp').indexOf('data:image/webp') === 0;
+  }
+}
+
+export const imageService = new ImageOptimizationService();
+```
+
+**Экономия:**
+- Original: 2MB → Optimized: 200KB (90% меньше!)
+- Mobile: 100KB
+- Desktop: 200KB
+- Все изображения в WebP где возможно
+
+#### 5. Lazy Loading изображений
+
+```tsx
+// components/LazyPinImage.tsx
+
+export const LazyPinImage: React.FC<{
+  src: string;
+  alt: string;
+  height: number;
+}> = ({ src, alt, height }) => {
+  const [isLoaded, setIsLoaded] = useState(false);
+  const { ref, isVisible } = useLazyLoad({ rootMargin: '200px' });
+
+  return (
+    <div 
+      ref={ref}
+      className="pin-image-container"
+      style={{ height: `${height}px` }}
+    >
+      {!isVisible && (
+        <div className="skeleton" style={{ height: '100%' }} />
+      )}
+      
+      {isVisible && (
+        <img
+          src={imageService.getResponsiveUrl(src)}
+          alt={alt}
+          loading="lazy"
+          onLoad={() => setIsLoaded(true)}
+          style={{ opacity: isLoaded ? 1 : 0 }}
+        />
+      )}
+    </div>
+  );
+};
+```
+
+---
+
+### B. Производительность рендеринга (Rendering Performance)
+
+#### 1. Time to First Contentful Paint (FCP)
+
+```html
+<!-- index.html -->
+<!DOCTYPE html>
+<html>
+<head>
+  <!-- Inline critical CSS -->
+  <style>
+    /* Above-the-fold стили для Masonry Grid */
+    .masonry-grid {
+      position: relative;
+      width: 100%;
+    }
+    .pin {
+      position: absolute;
+      width: 236px;
+      border-radius: 16px;
+      overflow: hidden;
+    }
+    .skeleton {
+      background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+      animation: shimmer 1.5s infinite;
+    }
+  </style>
+
+  <!-- Preconnect к важным доменам -->
+  <link rel="preconnect" href="https://cdn.pinterest.com">
+  <link rel="dns-prefetch" href="https://analytics.pinterest.com">
+</head>
+<body>
+  <div id="root"></div>
+
+  <!-- Основной скрипт с defer -->
+  <script src="/bundle.js" defer></script>
+  
+  <!-- Аналитика загружается после onLoad -->
+  <script>
+    window.addEventListener('load', () => {
+      const script = document.createElement('script');
+      script.src = '/analytics.js';
+      document.body.appendChild(script);
+    });
+  </script>
+</body>
+</html>
+```
+
+#### 2. CSS Naming Strategy (BEM)
+
+```css
+/* ❌ Плохо: Глубокая вложенность */
+.pins-grid .pin .image-container .image {
+  /* Браузеру нужно пройти 4 уровня */
+}
+
+/* ✅ Хорошо: Плоские селекторы (BEM) */
+.pin__image {
+  /* Прямой доступ */
+}
+
+/* Masonry Grid стили */
+.masonry-grid { }
+.masonry-grid__container { }
+
+.pin { }
+.pin__image { }
+.pin__overlay { }
+.pin__controls { }
+.pin__menu { }
+
+.pin-modal { }
+.pin-modal__content { }
+.pin-modal__comments { }
+```
+
+#### 3. Placeholders (Скелетоны)
+
+```tsx
+// components/PinSkeleton.tsx
+
+export const PinSkeleton: React.FC<{ height: number }> = ({ height }) => {
+  return (
+    <div className="pin-skeleton" style={{ height: `${height}px` }}>
+      <div className="skeleton-image" />
+      <div className="skeleton-title" />
+      <div className="skeleton-author" />
+    </div>
+  );
+};
+```
+
+```css
+/* styles/skeleton.css */
+
+@keyframes shimmer {
+  0% { background-position: -1000px 0; }
+  100% { background-position: 1000px 0; }
+}
+
+.skeleton-image {
+  background: linear-gradient(
+    90deg,
+    #f0f0f0 0%,
+    #e0e0e0 20%,
+    #f0f0f0 40%,
+    #f0f0f0 100%
+  );
+  background-size: 1000px 100%;
+  animation: shimmer 2s infinite;
+}
+```
+
+**Психологический эффект:** Пользователи воспринимают загрузку как более быструю!
+
+---
+
+### C. Производительность JavaScript
+
+#### 1. Делай меньше! (Do Less Stuff)
+
+```typescript
+// ❌ Плохо: Синхронная тяжелая работа
+const processImages = (images: Image[]) => {
+  images.forEach(img => {
+    // Блокирует UI!
+    const processed = heavyImageProcessing(img);
+    updateDOM(processed);
+  });
+};
+
+// ✅ Хорошо: Асинхронная обработка
+const processImages = async (images: Image[]) => {
+  for (const img of images) {
+    // Даем UI время на рендер
+    await new Promise(resolve => requestIdleCallback(resolve));
+    const processed = await processImageAsync(img);
+    updateDOM(processed);
+  }
+};
+```
+
+#### 2. Кэширование вычислений
+
+```typescript
+// hooks/useMasonryCalculations.ts
+
+const calculationCache = new Map<string, PinPosition>();
+
+export const useMasonryCalculations = () => {
+  const calculatePosition = (
+    pinId: number,
+    height: number,
+    columnHeights: number[]
+  ): PinPosition => {
+    const cacheKey = `${pinId}-${height}-${columnHeights.join(',')}`;
+    
+    // Проверяем кэш
+    if (calculationCache.has(cacheKey)) {
+      return calculationCache.get(cacheKey)!;
+    }
+
+    // Вычисляем
+    const position = doExpensiveCalculation(height, columnHeights);
+    
+    // Кэшируем
+    calculationCache.set(cacheKey, position);
+    
+    return position;
+  };
+
+  return { calculatePosition };
+};
+```
+
+#### 3. Web Workers для тяжелых вычислений
+
+```typescript
+// workers/imageProcessor.worker.ts
+
+self.addEventListener('message', (e: MessageEvent) => {
+  const { type, data } = e.data;
+
+  if (type === 'CALCULATE_MASONRY_POSITIONS') {
+    const positions = calculateMasonryPositions(data.pins, data.columnCount);
+    self.postMessage({ type: 'POSITIONS_CALCULATED', positions });
+  }
+});
+
+function calculateMasonryPositions(
+  pins: Array<{ id: number; height: number }>,
+  columnCount: number
+): PinPosition[] {
+  // Тяжелые вычисления в фоне
+  const columnHeights = new Array(columnCount).fill(0);
+  const positions: PinPosition[] = [];
+
+  pins.forEach(pin => {
+    const shortestColumn = columnHeights.indexOf(Math.min(...columnHeights));
+    positions.push({
+      top: columnHeights[shortestColumn],
+      left: shortestColumn * (PIN_WIDTH + GUTTER),
+      column: shortestColumn
+    });
+    columnHeights[shortestColumn] += pin.height + GUTTER;
+  });
+
+  return positions;
+}
+```
+
+```typescript
+// hooks/useMasonryWorker.ts
+
+export const useMasonryWorker = () => {
+  const workerRef = useRef<Worker>();
+
+  useEffect(() => {
+    workerRef.current = new Worker(
+      new URL('../workers/imageProcessor.worker.ts', import.meta.url)
+    );
+
+    return () => workerRef.current?.terminate();
+  }, []);
+
+  const calculatePositions = (pins: Pin[], columnCount: number) => {
+    return new Promise<PinPosition[]>((resolve) => {
+      const handleMessage = (e: MessageEvent) => {
+        if (e.data.type === 'POSITIONS_CALCULATED') {
+          workerRef.current?.removeEventListener('message', handleMessage);
+          resolve(e.data.positions);
+        }
+      };
+
+      workerRef.current?.addEventListener('message', handleMessage);
+      workerRef.current?.postMessage({
+        type: 'CALCULATE_MASONRY_POSITIONS',
+        data: { pins, columnCount }
+      });
+    });
+  };
+
+  return { calculatePositions };
+};
+```
+
+---
+
+### D. PWA и Offline режим
+
+```typescript
+// service-worker.ts
+
+import { precacheAndRoute } from 'workbox-precaching';
+import { registerRoute } from 'workbox-routing';
+import { CacheFirst, StaleWhileRevalidate } from 'workbox-strategies';
+import { ExpirationPlugin } from 'workbox-expiration';
+
+// Кэш статических ресурсов
+precacheAndRoute(self.__WB_MANIFEST);
+
+// Кэш изображений пинов (Cache First)
+registerRoute(
+  ({ request }) => request.destination === 'image',
+  new CacheFirst({
+    cacheName: 'pinterest-images',
+    plugins: [
+      new ExpirationPlugin({
+        maxEntries: 200,        // Максимум 200 изображений
+        maxAgeSeconds: 30 * 24 * 60 * 60, // 30 дней
+        purgeOnQuotaError: true // Удалять при нехватке места
+      })
+    ]
+  })
+);
+
+// Кэш API данных (Stale While Revalidate)
+registerRoute(
+  ({ url }) => url.pathname.startsWith('/api/pins'),
+  new StaleWhileRevalidate({
+    cacheName: 'pinterest-api',
+    plugins: [
+      new ExpirationPlugin({
+        maxEntries: 50,
+        maxAgeSeconds: 5 * 60  // 5 минут
+      })
+    ]
+  })
+);
+```
+
+**Результат:**
+- ✅ Просмотренные пины доступны offline
+- ✅ Работа в самолете
+- ✅ Мгновенная загрузка кэшированных изображений
+
+---
+
+## 9. ♿ Доступность (Accessibility)
+
+### A. Клавиатурная навигация
+
+```typescript
+// hooks/useKeyboardShortcuts.ts
+
+export const useKeyboardShortcuts = () => {
+  useEffect(() => {
+    const handleKeyPress = (e: KeyboardEvent) => {
+      // J — скролл к следующему пину
+      if (e.key === 'j') {
+        scrollToNextPin();
+      }
+      
+      // K — скролл к предыдущему пину
+      if (e.key === 'k') {
+        scrollToPreviousPin();
+      }
+      
+      // Home — наверх
+      if (e.key === 'Home') {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+      
+      // End — вниз
+      if (e.key === 'End') {
+        window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+      }
+      
+      // L — лайк текущего пина
+      if (e.key === 'l') {
+        likeCurrentPin();
+      }
+      
+      // S — поделиться
+      if (e.key === 's') {
+        shareCurrentPin();
+      }
+      
+      // ? — показать помощь по hotkeys
+      if (e.key === '?' && e.shiftKey) {
+        showKeyboardHelp();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyPress);
+    return () => window.removeEventListener('keydown', handleKeyPress);
+  }, []);
+};
+```
+
+### B. Цветовые схемы
+
+```css
+/* Поддержка темной темы */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg-primary: #000000;
+    --bg-secondary: #1a1a1a;
+    --text-primary: #ffffff;
+    --text-secondary: #b0b0b0;
+  }
+}
+
+/* Высокая контрастность */
+@media (prefers-contrast: high) {
+  .pin {
+    border: 2px solid var(--text-primary);
+  }
+}
+
+/* Поддержка цветовой слепоты */
+.color-blind-mode {
+  /* Избегаем красно-зеленых комбинаций */
+  --success-color: #0066cc; /* Синий вместо зеленого */
+  --error-color: #ff9900;   /* Оранжевый вместо красного */
+}
+```
+
+### C. ARIA атрибуты для скринридеров
+
+```tsx
+// components/AccessiblePin.tsx
+
+export const AccessiblePin: React.FC<{ pin: Pin }> = ({ pin }) => {
+  return (
+    <article
+      className="pin"
+      role="article"
+      aria-labelledby={`pin-title-${pin.id}`}
+      aria-describedby={`pin-desc-${pin.id}`}
+    >
+      <img
+        src={pin.imageUrl}
+        alt={pin.title}
+        role="img"
+        aria-label={`Image: ${pin.title}`}
+      />
+
+      <div className="pin-info">
+        <h3 id={`pin-title-${pin.id}`}>
+          {pin.title}
+        </h3>
+        <p id={`pin-desc-${pin.id}`}>
+          {pin.description}
+        </p>
+      </div>
+
+      <div 
+        className="pin-controls"
+        role="group"
+        aria-label="Pin actions"
+      >
+        <button
+          aria-label={`Like pin. Currently ${pin.likesCount} likes`}
+          aria-pressed={pin.isLiked}
+        >
+          ❤️ {pin.likesCount}
+        </button>
+
+        <button
+          aria-label="Share pin"
+          aria-haspopup="menu"
+        >
+          Share
+        </button>
+      </div>
+
+      {/* Live region для обновлений */}
+      <div
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        className="sr-only"
+      >
+        {/* Динамические обновления озвучиваются */}
+      </div>
+    </article>
+  );
+};
+```
+
+### D. REM вместо Pixels
+
+```css
+/* ❌ Плохо: Фиксированные пиксели */
+.pin {
+  font-size: 14px;
+  padding: 16px;
+}
+/* Не масштабируется при зуме браузера! */
+
+/* ✅ Хорошо: REM units */
+:root {
+  font-size: 16px; /* Base size */
+}
+
+.pin {
+  font-size: 0.875rem;  /* 14px */
+  padding: 1rem;        /* 16px */
+}
+/* Масштабируется при изменении настроек браузера! */
+```
+
+**Почему это важно:**
+- Пользователи с плохим зрением увеличивают базовый размер шрифта
+- REM адаптируется, pixels — нет
+- Accessibility win!
+
+---
+
+## 📊 Итоговая диаграмма архитектуры
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    USER BROWSER                         │
+├─────────────────────────────────────────────────────────┤
+│                                                         │
+│  ┌──────────────┐         ┌──────────────┐            │
+│  │   React UI   │◄────────│ Redux Store  │            │
+│  │              │         │ (Normalized) │            │
+│  │ - PinsGrid   │         └──────────────┘            │
+│  │ - Masonry    │                ▲                     │
+│  │ - Pin Cards  │                │                     │
+│  └──────────────┘                │                     │
+│         ▲                        │                     │
+│         │                        │                     │
+│         │         ┌──────────────┴─────────┐          │
+│         │         │   API Layer            │          │
+│         │         │   - getPins()          │          │
+│         │         │   - getComments()      │          │
+│         │         └────────────────────────┘          │
+│         │                        ▲                     │
+│  ┌──────┴──────────┐            │                     │
+│  │ Service Worker  │            │                     │
+│  │ - Image Cache   │            │                     │
+│  │ - API Cache     │            │                     │
+│  │ - Offline Mode  │            │                     │
+│  └─────────────────┘            │                     │
+│         ▲                        │                     │
+└─────────┼────────────────────────┼─────────────────────┘
+          │                        │
+          │                        │
+┌─────────┼────────────────────────┼─────────────────────┐
+│         │       CDN              │      BACKEND        │
+│  ┌──────┴────────┐        ┌──────┴─────────┐          │
+│  │ Image         │        │ API Server     │          │
+│  │ Optimization  │        │ - /pins        │          │
+│  │ Service       │        │ - /comments    │          │
+│  │               │        │                │          │
+│  │ - Resize      │        └────────────────┘          │
+│  │ - WebP        │                                    │
+│  │ - Cache       │                                    │
+│  └───────────────┘                                    │
+└─────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 🎓 Ключевые выводы (Key Takeaways)
+
+### 1. **Masonry Layout — сердце Pinterest**
+- Абсолютное позиционирование для производительности
+- `transform: translate3d()` вместо `top`/`left`
+- Sliding Window для виртуализации
+- Intersection Observer для загрузки
+
+### 2. **Оптимизация изображений критична**
+- 90% контента = изображения
+- Image Optimization Service обязателен
+- CDN кэширование
+- Lazy loading
+- WebP формат
+
+### 3. **Производительность прежде всего**
+- HTTP/2 для параллельной загрузки
+- Code splitting
+- Web Workers для вычислений
+- GPU acceleration (transform)
+- Service Workers для offline
+
+### 4. **Архитектура данных**
+- Нормализованный store (O(1) доступ)
+- Разделение слоев (UI ← Store ← API)
+- Эффективное кэширование
+
+### 5. **Accessibility matters**
+- Клавиатурная навигация
+- ARIA атрибуты
+- Поддержка скринридеров
+- REM вместо pixels
+- Цветовые схемы
+
+---
+
+## 🎯 На интервью фокусируйтесь на:
+
+**Если просят про Layout:**
+- Masonry алгоритм (выбор колонки, позиционирование)
+- Абсолютное позиционирование
+- Виртуализация (Sliding Window)
+- Intersection Observer
+
+**Если просят про Performance:**
+- Image optimization (ключевое!)
+- HTTP/2 и multiplexing
+- Code splitting
+- Lazy loading
+- Service Workers
+
+**Если просят про API:**
+- Нормализованный store
+- Pagination (cursor-based)
+- Кэширование
+- Real-time обновления
+
+**Полное прохождение займет ~60 минут**, но обычно просят сфокусироваться на 1-2 аспектах!
+
+---
+
+**Время выполнения:** ~45-60 минут (full), 15-20 минут (focused)  
+**Уровень:** Middle/Senior Frontend Engineer  
+**Компании:** Pinterest, Instagram, Tumblr, Behance
+
+Удачи на интервью! 🚀

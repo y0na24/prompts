@@ -1,0 +1,792 @@
+# Frontend System Design: Poll Widget
+
+## 📋 Введение
+
+Добро пожаловать на финальный урок серии по системному дизайну для фронтенд-инженеров. Сегодня рассмотрим проектирование Poll Widget (виджет голосования) — компонента для создания опросов с возможностью голосования за один или несколько вариантов.
+
+---
+
+## 📝 План Component Design
+
+1. ✅ **Общие требования**
+2. ✅ **Функциональные требования**
+3. ✅ **Архитектура компонента**
+4. ✅ **Props Design**
+5. ✅ **API Design**
+6. ✅ **State Design**
+7. ✅ **Оптимизация**
+8. ✅ **Accessibility**
+9. ✅ **Extensibility**
+10. ✅ **Embeddable Integration**
+
+---
+
+## 1. 📌 Общие требования
+
+### Основной функционал:
+
+**1. Голосование**
+```
+✅ Vote (голосовать)
+✅ Revoke (отменить голос)
+✅ Multiple answers (множественный выбор)
+✅ Single answer (одиночный выбор)
+```
+
+**2. Read-only режим**
+```
+Проблема: Не залогиненные пользователи
+Решение: Read-only mode (только просмотр результатов)
+```
+
+**3. Кастомизация**
+```
+✅ CSS API
+✅ Custom render functions
+✅ User-defined templates
+```
+
+**4. NPM Distribution**
+```
+Компонент как npm package
+Переиспользуемость
+```
+
+**5. Embeddable Integration**
+```
+✅ iframe embedding
+✅ Third-party websites
+✅ Medium, WordPress, etc.
+```
+
+---
+
+## 2. 🎯 Функциональные требования
+
+**1. Multi-platform**
+```
+✅ Mobiles
+✅ Tablets
+✅ Desktops
+```
+
+**2. Конфигурируемость**
+```
+✅ Custom options
+✅ CSS extensions
+✅ Render functions
+✅ Callback functions
+```
+
+**3. Async + Static режимы**
+```
+Async: Server requests
+Static: Client-only (no server)
+```
+
+---
+
+## 3. 🏗️ Архитектура компонента
+
+### Mockup — View Mode (read-only):
+
+```
+┌─────────────────────────────┐
+│  Poll Title                 │
+├─────────────────────────────┤
+│  Option 1  [████████] 40%   │
+│  Option 2  [█████   ] 25%   │
+│  Option 3  [███████ ] 35%   │
+├─────────────────────────────┤
+│  [Vote] [Revoke]            │
+└─────────────────────────────┘
+
+Особенности:
+- Bar chart visualization
+- Percentages
+- Customizable view
+```
+
+### Mockup — Edit Mode (voting):
+
+```
+┌─────────────────────────────┐
+│  Poll Title                 │
+├─────────────────────────────┤
+│  ○ Option 1                 │ ← Selectable
+│  ○ Option 2                 │
+│  ○ Option 3                 │
+├─────────────────────────────┤
+│  [Submit] [Revoke]          │
+└─────────────────────────────┘
+```
+
+### Component Hierarchy:
+
+```
+PollWidget (root)
+├── PollTitle
+├── OptionsList
+│   └── OptionItem × N
+│       ├── ViewItem (read-only)
+│       │   └── Bar chart + %
+│       └── SelectableItem (edit mode)
+│           └── Radio/Checkbox
+└── Buttons
+    ├── VoteButton
+    └── RevokeButton
+```
+
+**Ключевое:**
+- `ViewItem` — кастомизируется (bar chart, pie chart, etc.)
+- `SelectableItem` — кастомизируется (checkbox, radio, custom)
+
+---
+
+## 4. 🔌 Props Design
+
+### TypeScript Interface:
+
+```typescript
+type PollProps = {
+  // 1. Заголовок
+  title: string;
+  
+  // 2. Опции голосования
+  options: Option[];
+  
+  // 3. Read-only режим
+  readOnly?: boolean;
+  
+  // 4. Callback при голосовании
+  onVote: (selectedOptions: Option[]) => void;
+  
+  // 5. Custom render для редактирования
+  renderEditItem?: (option: Option) => HTMLElement;
+  
+  // 6. Custom render для просмотра
+  renderReadItem?: (option: Option) => HTMLElement;
+};
+```
+
+### Option Structure:
+
+```typescript
+interface Option {
+  name: string;        // Название опции
+  votes: number;       // Количество голосов
+  order: number;       // Порядок отображения
+}
+```
+
+**Философия:**
+```
+Pure View Component
+- Data in → View out
+- No business logic inside
+- Simpler = Better
+```
+
+---
+
+## 5. 📡 API Design
+
+### Public API:
+
+```typescript
+interface PollAPI {
+  // Re-initialize with new props
+  initialize(props: PollProps): void;
+  
+  // Destroy widget
+  destroy(): void;
+}
+```
+
+### Usage:
+
+```typescript
+const poll = new PollWidget({
+  title: "Favorite Language?",
+  options: [
+    { name: "JavaScript", votes: 100, order: 1 },
+    { name: "TypeScript", votes: 150, order: 2 },
+    { name: "Python", votes: 80, order: 3 }
+  ],
+  onVote: (selected) => {
+    console.log("Voted:", selected);
+  }
+});
+
+// Update with new data
+poll.initialize({ ...newProps });
+
+// Remove from DOM
+poll.destroy();
+```
+
+---
+
+## 6. 🗄️ State Design
+
+### Internal State:
+
+```typescript
+interface PollState {
+  // 1. Props (stored internally)
+  title: string;
+  options: Option[];
+  readOnly: boolean;
+  onVote: Function;
+  renderEditItem?: Function;
+  renderReadItem?: Function;
+  
+  // 2. Root DOM element
+  rootElement: HTMLElement;
+  
+  // 3. Cached DOM elements (optimization!)
+  elements: HTMLElement[];
+}
+```
+
+### Data Flow:
+
+```
+Props Input
+    ↓
+State Storage
+    ↓
+PollTitle ← title
+    ↓
+OptionsList ← options[], onVote
+    ↓
+OptionItem ← option, renderEditItem, renderReadItem
+    ↓ (sorted by order)
+ViewItem / SelectableItem
+```
+
+**Ключевое:** 
+- Options sorted by `order` field
+- `elements[]` cached for reuse (optimization)
+
+---
+
+## 7. ⚡ Оптимизация
+
+### A. Network Performance
+
+**1. Asset Optimization**
+```
+✅ Minify JS/CSS
+✅ Gzip + Brotli compression
+✅ Serve from CDN
+```
+
+**2. Bundle Targets**
+```javascript
+// ES6 (modern browsers)
+// - No polyfills
+// - 50KB lighter
+
+// ES5 (old browsers)
+// - With polyfills
+```
+
+**3. Modular Bundles**
+```
+@company/poll-widget/core
+@company/poll-widget/themes
+@company/poll-widget/utils
+
+Import only what you need!
+```
+
+---
+
+### B. Rendering Performance (DOM)
+
+**1. Reuse DOM Elements ⭐**
+```typescript
+// ❌ Плохо: Re-render everything
+updateOptions(newOptions) {
+  container.innerHTML = '';  // Clear all
+  newOptions.forEach(opt => {
+    const el = renderOption(opt);
+    container.appendChild(el); // Create new
+  });
+}
+
+// ✅ Хорошо: Update existing
+updateOptions(newOptions) {
+  state.elements.forEach((element, index) => {
+    const newOption = newOptions[index];
+    
+    // Update text only!
+    element.querySelector('.name').textContent = newOption.name;
+    element.querySelector('.votes').textContent = newOption.votes;
+    element.querySelector('.bar').style.width = `${percentage}%`;
+  });
+}
+```
+
+**Почему это важно:**
+```
+Re-render:
+- Remove DOM nodes
+- Create new nodes
+- Insert to DOM
+→ Reflow! Медленно!
+
+Update:
+- Same DOM nodes
+- Change text/attributes
+→ No reflow! Быстро!
+```
+
+**2. No Virtualization Needed**
+```
+Polls обычно имеют мало опций (3-10)
+→ Виртуализация не требуется
+```
+
+---
+
+### C. CSS Optimization
+
+**1. CSS Naming Strategy**
+```css
+/* ✅ BEM / CSS Modules */
+.poll__option { }
+.poll__bar { }
+.poll__percentage { }
+```
+
+**2. CSS Animations**
+```css
+/* GPU-accelerated */
+.poll__bar {
+  transition: width 0.3s ease;
+}
+```
+
+**3. Placeholders**
+```
+Loading state:
+[████] Loading options...
+```
+
+---
+
+### D. JavaScript Performance
+
+**1. Event Delegation ⭐**
+```typescript
+// ❌ Плохо: Listener на каждую опцию
+options.forEach(option => {
+  option.addEventListener('click', handleClick);
+});
+
+// ✅ Хорошо: Один listener на root
+pollWidget.addEventListener('click', (e) => {
+  const option = e.target.closest('[data-option-id]');
+  if (option) {
+    handleVote(option.dataset.optionId);
+  }
+});
+```
+
+**2. No Heavy Operations**
+```
+Poll widget = простая логика
+→ Web Workers не нужны
+```
+
+---
+
+## 8. ♿ Accessibility
+
+### A. Use REMs
+
+```css
+.poll {
+  font-size: 1rem;
+  padding: 0.5rem;
+}
+```
+
+### B. Keyboard Shortcuts
+
+```
+Tab: Navigate between options
+Enter/Space: Vote
+R: Revoke
+V: See results
+```
+
+### C. HTML5 Semantics ⭐
+
+```html
+<!-- ✅ Хорошо: Form semantics -->
+<form class="poll">
+  <fieldset>
+    <legend>Poll Title</legend>
+    
+    <!-- Single choice -->
+    <input 
+      type="radio" 
+      name="poll-option" 
+      id="opt1"
+      value="option1"
+    />
+    <label for="opt1">Option 1</label>
+    
+    <!-- Multiple choice -->
+    <input 
+      type="checkbox" 
+      name="poll-option" 
+      id="opt2"
+      value="option2"
+    />
+    <label for="opt2">Option 2</label>
+  </fieldset>
+  
+  <button type="submit">Vote</button>
+</form>
+
+<!-- ❌ Плохо: Div soup -->
+<div class="poll">
+  <div class="option" onclick="vote()">Option 1</div>
+</div>
+```
+
+**Преимущества `<form>` + `<input>`:**
+```
+✅ SEO optimized
+✅ Screen reader friendly
+✅ Keyboard navigation из коробки
+✅ Accessibility по умолчанию
+```
+
+### D. ARIA Attributes
+
+```html
+<div 
+  role="radiogroup"
+  aria-labelledby="poll-title"
+>
+  <div 
+    role="radio"
+    aria-checked="false"
+    aria-label="Option 1: 40%"
+  >
+    Option 1
+  </div>
+</div>
+
+<!-- Announce selection -->
+<div 
+  role="status"
+  aria-live="polite"
+>
+  You selected Option 1
+</div>
+```
+
+---
+
+## 9. 🔧 Extensibility
+
+### A. CSS API
+
+```typescript
+<PollWidget 
+  className="custom-poll"
+  options={[
+    { 
+      name: 'Option 1',
+      className: 'custom-option'
+    }
+  ]}
+/>
+```
+
+```css
+/* Custom styling */
+.custom-poll { }
+.custom-poll .poll__option { }
+.custom-poll .poll__bar { }
+```
+
+### B. ES6 Inheritance
+
+```typescript
+class CustomPollWidget extends PollWidget {
+  // Extend functionality
+  addShareButton() { ... }
+  enableRealTimeUpdates() { ... }
+  exportResults() { ... }
+}
+```
+
+### C. Render Functions
+
+```typescript
+const poll = new PollWidget({
+  // Custom view
+  renderReadItem: (option) => {
+    const div = document.createElement('div');
+    div.innerHTML = `
+      <div class="custom-bar">
+        <span>${option.name}</span>
+        <div class="pie-chart" data-votes="${option.votes}"></div>
+      </div>
+    `;
+    return div;
+  },
+  
+  // Custom edit
+  renderEditItem: (option) => {
+    const label = document.createElement('label');
+    label.innerHTML = `
+      <input type="checkbox" value="${option.name}" />
+      <span class="fancy-checkbox">${option.name}</span>
+    `;
+    return label;
+  }
+});
+```
+
+---
+
+## 10. 🌐 Embeddable Integration
+
+### A. Application Architecture
+
+```
+Application
+└── Router
+    ├── /home
+    ├── /profile
+    └── /embed/poll/:pollId ⭐
+        └── PollWidget
+```
+
+### B. Embeddable Route
+
+```typescript
+// /embed/poll/:pollId
+app.get('/embed/poll/:pollId', async (req, res) => {
+  const pollId = req.params.pollId;
+  
+  // Fetch poll data
+  const pollData = await fetchPollData(pollId);
+  
+  // Render minimal HTML
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <link rel="stylesheet" href="/poll-widget.css">
+    </head>
+    <body>
+      <div id="poll-container"></div>
+      <script src="/poll-widget.js"></script>
+      <script>
+        new PollWidget({
+          container: '#poll-container',
+          ...${JSON.stringify(pollData)}
+        });
+      </script>
+    </body>
+    </html>
+  `);
+});
+```
+
+### C. Integration Methods
+
+**1. iframe Embedding**
+
+```html
+<!-- Любой сайт -->
+<iframe 
+  src="https://yourapp.com/embed/poll/123"
+  width="400"
+  height="300"
+  frameborder="0"
+></iframe>
+```
+
+**Преимущества:**
+```
+✅ Изоляция (sandbox)
+✅ Работает везде
+✅ Простая интеграция
+```
+
+**2. Script Tag**
+
+```html
+<div id="poll-123"></div>
+<script src="https://yourapp.com/poll-widget.js"></script>
+<script>
+  PollWidget.create({
+    container: '#poll-123',
+    pollId: '123'
+  });
+</script>
+```
+
+**3. Embedly / oEmbed Provider**
+
+```json
+// https://yourapp.com/oembed?url=...
+{
+  "type": "rich",
+  "version": "1.0",
+  "title": "Poll: Favorite Language?",
+  "html": "<iframe src='...'></iframe>",
+  "width": 400,
+  "height": 300
+}
+```
+
+**Регистрация:**
+```
+1. Register на Embedly
+2. Provide oEmbed endpoint
+3. Автоматическая работа на Medium, WordPress, etc.
+```
+
+---
+
+## 📊 Итоговая архитектура
+
+```
+┌─────────────────────────────────────────┐
+│         Poll Widget Component           │
+├─────────────────────────────────────────┤
+│                                         │
+│  Props:                                 │
+│  - title                                │
+│  - options[]                            │
+│  - readOnly                             │
+│  - onVote()                             │
+│  - renderEditItem()                     │
+│  - renderReadItem()                     │
+│                                         │
+├─────────────────────────────────────────┤
+│                                         │
+│  State:                                 │
+│  - Cached elements[]                    │
+│  - rootElement                          │
+│                                         │
+├─────────────────────────────────────────┤
+│                                         │
+│  DOM:                                   │
+│  <form>                                 │
+│    <fieldset>                           │
+│      <legend>Title</legend>             │
+│      <input type="radio/checkbox" />    │
+│      <label>Option 1</label>            │
+│    <button>Vote</button>                │
+│                                         │
+├─────────────────────────────────────────┤
+│                                         │
+│  Integration:                           │
+│  ├── iframe                             │
+│  ├── Script tag                         │
+│  └── oEmbed (Embedly)                   │
+│                                         │
+└─────────────────────────────────────────┘
+```
+
+---
+
+## 🎓 Ключевые выводы
+
+### 1. **Pure View Component**
+```
+Data in → View out
+No business logic
+Simple & Maintainable
+```
+
+### 2. **HTML5 Semantics ⭐**
+```
+<form> + <input type="radio/checkbox">
+= Accessibility из коробки
+= SEO friendly
+```
+
+### 3. **Reuse DOM**
+```
+Update existing elements
+vs
+Re-render everything
+= Performance boost
+```
+
+### 4. **Event Delegation**
+```
+1 listener на root
+vs
+N listeners на options
+= Memory efficient
+```
+
+### 5. **Embeddable**
+```
+iframe: Universal
+Script: Flexible
+oEmbed: Auto-integration
+```
+
+### 6. **Extensibility**
+```
+CSS API
+Render functions
+ES6 inheritance
+= Customizable
+```
+
+---
+
+## 🎯 Component Design Checklist
+
+**✅ Props Design:**
+- Simple Option structure
+- Custom render functions
+- Callbacks (onVote)
+
+**✅ State Design:**
+- Minimal state
+- Cached elements
+
+**✅ Performance:**
+- Reuse DOM
+- Event delegation
+- No heavy operations
+
+**✅ Accessibility:**
+- HTML5 semantics (`<form>`)
+- Keyboard navigation
+- ARIA attributes
+
+**✅ Extensibility:**
+- CSS API
+- Render functions
+- Inheritance
+
+**✅ Embeddable:**
+- iframe support
+- oEmbed provider
+- Script integration
+
+---
+
+**Время выполнения:** ~40 минут  
+**Уровень:** Senior Frontend Engineer  
+**Компании:** Facebook, Google, Twitter
+
+Удачи на интервью! 🗳️🚀

@@ -1,0 +1,778 @@
+# Frontend System Design: Data Table Component
+
+## 📋 Введение
+
+Добро пожаловать на урок по **Component Design** для фронтенд-инженеров. Сегодня рассмотрим проектирование универсального Data Table — одну из самых частых задач на интервью в Facebook и Amazon.
+
+### 🔄 Component Design Focus
+
+**Отличие от System Design:**
+- НЕ фокус на API сервера
+- НЕ фокус на data entities от бэкенда
+- ✅ Фокус на **API компонента** (props, methods, events)
+- ✅ Как использовать в разных местах приложения
+- ✅ Кастомизация и расширяемость
+
+---
+
+## 📝 План Component Design
+
+1. ✅ **Общие требования**
+2. ✅ **Функциональные требования**
+3. ✅ **Архитектура компонента**
+4. ✅ **Props Design** — ключевое!
+5. ✅ **Event API Design**
+6. ✅ **State Design**
+7. ✅ **Оптимизация**
+8. ✅ **Extensibility** (Расширяемость)
+9. ✅ **Accessibility**
+
+---
+
+## 1. 📌 Общие требования
+
+### Основной функционал:
+
+**1. Работа с разными форматами данных**
+```
+Поддержка out-of-the-box:
+✅ Date (дата)
+✅ Number (число)
+✅ String (строка)
+✅ Custom format (с пользовательским рендером)
+```
+
+**2. Кастомизация данных**
+```
+Проблема: Разные типы данных требуют разного отображения
+Решение: User defines custom render function
+```
+
+**3. Сортировка и фильтрация**
+```
+✅ Sort by each column
+✅ Configurable sorting
+✅ Search by query
+```
+
+**4. Export (опционально)**
+```
+? Support export to CSV
+(Зависит от требований интервьюера)
+```
+
+---
+
+## 2. 🎯 Функциональные требования
+
+**1. Работа с большими датасетами ⭐**
+```
+Поддержка тысяч строк
+Производительность критична!
+```
+
+**2. Multi-platform**
+```
+✅ Wide range of devices
+✅ Mobile, tablets, desktop
+✅ Old devices support
+```
+
+**3. Accessibility**
+```
+✅ Screen reader friendly
+✅ Keyboard navigation
+```
+
+**4. Конфигурируемость**
+```
+✅ Hide/show columns
+✅ Sortable/non-sortable columns
+✅ Custom column names
+✅ Custom comparators
+```
+
+**5. CSS API**
+```
+Styling capabilities
+Custom themes
+```
+
+---
+
+## 3. 🏗️ Архитектура компонента
+
+### Mockup:
+
+```
+┌─────────────────────────────────────────┐
+│ Column 1 ↕ │ Column 2 ↕ │ Column 3 ↕  │ ← Headers (sortable)
+├─────────────┼─────────────┼─────────────┤
+│ Data 1      │ 2024-01-01  │ 123        │
+│ Data 2      │ 2024-01-02  │ 456        │
+│ Data 3      │ 2024-01-03  │ 789        │
+│ ...         │ ...         │ ...        │
+└─────────────┴─────────────┴─────────────┘
+
+Типы колонок:
+- String
+- Date
+- Number
+- Custom (user-defined)
+```
+
+### Component Hierarchy:
+
+```
+DataTable (root)
+├── Header
+│   └── ColumnHeader × N
+│       └── Sort indicator
+└── RowList
+    └── Row × N
+        └── Column × N
+            └── RenderItem (user-defined)
+```
+
+**Ключевое:** 
+- `RenderItem` = зелёный = пользовательский
+- Адаптивное количество колонок
+
+---
+
+## 4. 🔌 Props Design — КРИТИЧНО!
+
+### TypeScript Interface:
+
+```typescript
+type DataTableProps<T extends object> = {
+  // 1. Входные данные (generic type!)
+  data: T[];
+  
+  // 2. Описание колонок
+  columns: Column<T>[];
+  
+  // 3. Пагинация
+  pagination?: boolean;      // default: true
+  pageSize?: number;         // default: 10
+  
+  // 4. Кастомный CSS класс
+  className?: string;
+  
+  // 5. Функции фильтрации/поиска
+  filterFunc?: (data: T[], query: string) => T[];
+  searchFunc?: (data: T[], query: string) => T[];
+};
+```
+
+### Column Descriptor:
+
+```typescript
+type Column<T> = {
+  // 1. Название колонки
+  name: string;
+  
+  // 2. Тип данных
+  type: 'string' | 'number' | 'date' | 'custom';
+  
+  // 3. Сортировка
+  sortable?: boolean;        // default: true
+  comparator?: (a: T, b: T) => number;  // Custom сортировка
+  
+  // 4. Видимость
+  hidden?: boolean;          // default: false
+  
+  // 5. Custom рендер
+  render?: (data: T) => HTMLElement;
+  update?: (element: HTMLElement, data: T) => HTMLElement;
+};
+```
+
+### Зачем `update` функция?
+
+```
+Без update:
+- Удаляем старый DOM элемент
+- Создаём новый
+- Вставляем в DOM
+→ Медленно! Reflow!
+
+С update:
+- Переиспользуем существующий DOM
+- Обновляем только данные
+→ Быстро!
+```
+
+---
+
+## 5. 📡 Event API Design
+
+### Events:
+
+```typescript
+type DataTableEvent = 
+  | 'cell-select'
+  | 'row-select'
+  | 'page-change';
+
+interface DataTableAPI<T> {
+  // Subscribe to events
+  on(event: DataTableEvent, callback: Function): void;
+  
+  // Destroy table
+  destroy(): void;
+  
+  // Re-initialize with new config
+  initialize(props: DataTableProps<T>): void;
+}
+```
+
+### Usage:
+
+```typescript
+const table = new DataTable({
+  data: users,
+  columns: userColumns
+});
+
+// Listen to events
+table.on('cell-select', (cell) => {
+  console.log('Selected:', cell.data);
+});
+
+table.on('page-change', (page) => {
+  console.log('Page:', page);
+});
+```
+
+---
+
+## 6. 🗄️ State Design
+
+### Internal State:
+
+```typescript
+interface DataTableState<T> {
+  // 1. Исходные данные
+  data: T[];
+  
+  // 2. Отфильтрованные данные
+  filteredData: T[];
+  
+  // 3. Состояние сортировки
+  sortColumns: Array<{
+    columnIndex: number;
+    direction: 'asc' | 'desc';
+  }>;
+  
+  // 4. Колонки
+  columns: Column<T>[];
+  
+  // 5. Event listeners
+  listeners: Map<DataTableEvent, Function[]>;
+  
+  // 6. Поиск
+  searchable: boolean;
+  
+  // 7. Стили
+  className?: string;
+  
+  // 8. Пагинация
+  pagination: boolean;
+  currentPage: number;
+  pageSize: number;
+  
+  // 9. DOM элементы (для переиспользования!)
+  elements: HTMLElement[];
+}
+```
+
+### Data Flow:
+
+```
+Input Data + Columns
+    ↓
+Store in State
+    ↓
+Header ← columns[]
+    ↓ Generate ColumnHeader × N
+    ↓
+RowList ← data[]
+    ↓ Generate Row × N (по pageSize)
+    ↓
+Column ← datum + columnIndex
+    ↓
+RenderItem(datum[columnIndex])
+```
+
+**Ключевое:** 
+- `columnIndex` = позиция в объекте (упрощение)
+- Можно усложнить через `key` в Column descriptor
+
+---
+
+## 7. ⚡ Оптимизация
+
+### A. Network Performance
+
+**1. Asset Compression**
+```
+✅ Gzip + Brotli
+```
+
+**2. Bundle Targets**
+```javascript
+// ES6 bundle (modern browsers)
+// - No polyfills
+// - Smaller size
+// - Chromium-based apps
+
+// ES5 bundle (old browsers)
+// - With polyfills
+// - Bigger size
+```
+
+**3. Limit JS Features**
+```
+Меньше используем новых фич
+→ Меньше полифиллов в ES5 bundle
+```
+
+**4. Modular Bundles**
+```
+@company/data-table/core
+@company/data-table/utils
+@company/data-table/themes
+
+Import only what you need!
+```
+
+**5. Minify & CDN**
+```
+✅ Minify CSS/JS
+✅ Serve from CDN
+```
+
+---
+
+### B. Rendering Performance (DOM) ⭐
+
+**1. Pagination > Virtualization**
+```
+Для data table:
+❌ Virtualization (для простых списков)
+✅ Pagination (для структурированных данных)
+
+Почему:
+- Нужно знать точную страницу
+- Структурированные данные
+- Пользователь ожидает номера страниц
+```
+
+**2. Constant Number of Nodes ⭐**
+```
+Проблема:
+1000 rows → 1000 DOM nodes → МЕДЛЕННО!
+
+Решение:
+pageSize = 10 → Always 10 DOM nodes
+
+Механизм:
+- Create 10 nodes once
+- Store in state.elements
+- Update data only (no delete/insert)
+```
+
+**3. Reuse DOM via Update Function ⭐**
+```typescript
+// ❌ Плохо: Remove + Create
+rows.forEach(row => {
+  row.remove();                    // Expensive!
+  const newRow = renderRow(data);
+  container.appendChild(newRow);   // Expensive!
+});
+
+// ✅ Хорошо: Update existing
+state.elements.forEach((element, index) => {
+  const newData = filteredData[index];
+  
+  if (column.update) {
+    column.update(element, newData);  // Just update!
+  } else {
+    element = column.render(newData);
+  }
+});
+```
+
+**Почему это важно:**
+```
+Remove + Insert:
+- Triggers reflow
+- Memory allocation
+- Style recalculation
+
+Update:
+- No reflow
+- Same nodes
+- Just data change
+→ 10x faster!
+```
+
+**4. Predefined Update Functions**
+```typescript
+// Для стандартных типов
+const updates = {
+  string: (el, data) => { el.textContent = data; },
+  number: (el, data) => { el.textContent = data.toFixed(2); },
+  date: (el, data) => { el.textContent = data.toLocaleDateString(); }
+};
+```
+
+---
+
+### C. CSS Optimization
+
+**1. CSS Naming Convention (BEM)**
+```css
+/* ❌ Nested selectors */
+.table .header .column .text { }
+
+/* ✅ Flat selectors */
+.table__column-text { }
+```
+
+**2. CSS Animations (not JS)**
+```css
+/* GPU-accelerated */
+.table__row:hover {
+  transform: translateY(-2px);
+}
+```
+
+**3. Placeholders**
+```
+Loading state:
+[████] [████] [████]
+[██  ] [████] [██  ]
+
+Психология: Кажется быстрее!
+```
+
+---
+
+### D. JavaScript Performance
+
+**1. Do Stuff Asynchronously**
+```
+Не блокируем UI thread!
+```
+
+**2. Web Workers для фильтрации ⭐**
+```typescript
+// Проблема: 10,000 rows → UI lag
+
+// Решение: Filter in Worker
+const worker = new Worker('filter.worker.js');
+
+worker.postMessage({
+  data: largeDataset,
+  query: 'search term'
+});
+
+worker.onmessage = (e) => {
+  const filtered = e.data;
+  updateTable(filtered);
+};
+```
+
+**3. Server-Side Filtering**
+```typescript
+// Если filterFunc возвращает Promise
+if (isPromise(filterFunc)) {
+  // Server-side filtering
+  const results = await filterFunc(query);
+} else {
+  // Client-side (use Web Worker)
+  const results = await workerFilter(data, query);
+}
+```
+
+**4. Event Delegation ⭐**
+```typescript
+// ❌ Плохо: Listener на каждую ячейку
+cells.forEach(cell => {
+  cell.addEventListener('click', handleClick);
+});
+// 1000 cells = 1000 listeners = Memory leak!
+
+// ✅ Хорошо: Один listener на таблицу
+table.addEventListener('click', (e) => {
+  const cell = e.target.closest('[data-row][data-col]');
+  if (cell) {
+    const row = cell.dataset.row;
+    const col = cell.dataset.col;
+    handleCellClick(row, col);
+  }
+});
+// 1 listener для всей таблицы!
+```
+
+---
+
+## 8. 🔧 Extensibility (Расширяемость)
+
+### Способы расширения:
+
+**1. CSS API**
+```typescript
+<DataTable 
+  className="custom-theme"
+  columns={[
+    { name: 'User', className: 'user-column' }
+  ]}
+/>
+```
+
+**2. Custom Render Functions**
+```typescript
+columns: [
+  {
+    name: 'Avatar',
+    type: 'custom',
+    render: (user) => {
+      const div = document.createElement('div');
+      div.innerHTML = `<img src="${user.avatar}" />`;
+      return div;
+    },
+    update: (element, user) => {
+      element.querySelector('img').src = user.avatar;
+    }
+  }
+]
+```
+
+**3. ES6 Inheritance**
+```typescript
+class CustomDataTable extends DataTable {
+  // Extend functionality
+  addExportButton() { ... }
+  customSort() { ... }
+}
+```
+
+---
+
+## 9. ♿ Accessibility
+
+### A. Use `<table>` Tags ⭐
+
+```html
+<!-- ✅ Хорошо: Semantic HTML -->
+<table>
+  <thead>
+    <tr>
+      <th scope="col">Name</th>
+      <th scope="col">Age</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>John</td>
+      <td>25</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ❌ Плохо: Div soup -->
+<div class="table">
+  <div class="row">
+    <div class="cell">John</div>
+  </div>
+</div>
+```
+
+**Почему `<table>`?**
+```
+✅ SEO optimization (Google парсит данные)
+✅ Screen reader friendly (встроенная семантика)
+✅ Accessibility из коробки
+❌ Divs требуют много ARIA атрибутов
+```
+
+---
+
+### B. Use REMs
+
+```css
+/* Адаптация к browser zoom */
+.table {
+  font-size: 1rem;
+  padding: 0.5rem;
+}
+```
+
+---
+
+### C. Keyboard Navigation
+
+```
+По умолчанию с <table>:
+✅ Tab: Navigate cells
+✅ Arrow keys: Move between cells
+
+Дополнительно:
+- Ctrl+F: Search shortcut
+- Ctrl+S: Filter shortcut
+```
+
+---
+
+### D. ARIA Attributes
+
+```html
+<table 
+  role="grid"
+  aria-label="User data table"
+>
+  <th 
+    scope="col"
+    aria-sort="ascending"
+  >
+    Name
+  </th>
+  
+  <td 
+    role="gridcell"
+    aria-label="User name: John"
+  >
+    John
+  </td>
+</table>
+```
+
+---
+
+## 📊 Итоговая архитектура
+
+```
+┌─────────────────────────────────────────┐
+│         DataTable Component             │
+├─────────────────────────────────────────┤
+│                                         │
+│  Props<T>:                              │
+│  - data: T[]                            │
+│  - columns: Column<T>[]                 │
+│  - pagination, pageSize                 │
+│                                         │
+├─────────────────────────────────────────┤
+│                                         │
+│  State:                                 │
+│  - filteredData                         │
+│  - sortColumns                          │
+│  - elements[] (reused!)                 │
+│  - currentPage                          │
+│                                         │
+├─────────────────────────────────────────┤
+│                                         │
+│  DOM (Constant pageSize nodes):         │
+│  <table>                                │
+│    <thead>                              │
+│      <tr>                               │
+│        <th> × columns.length            │
+│    <tbody>                              │
+│      <tr> × pageSize (e.g. 10)          │
+│        <td> × columns.length            │
+│                                         │
+├─────────────────────────────────────────┤
+│                                         │
+│  Events:                                │
+│  - cell-select                          │
+│  - row-select                           │
+│  - page-change                          │
+│                                         │
+└─────────────────────────────────────────┘
+```
+
+---
+
+## 🎓 Ключевые выводы
+
+### 1. **Generic Type `<T>`**
+```typescript
+// Работа с любыми данными
+data: T[]
+columns: Column<T>[]
+```
+
+### 2. **Pagination > Virtualization**
+```
+Для Data Table:
+✅ Pagination (структурированные данные)
+❌ Virtualization (для списков)
+```
+
+### 3. **Reuse DOM ⭐**
+```
+Create once → Store → Update only
+= 10x performance boost
+```
+
+### 4. **Event Delegation**
+```
+1 listener на таблицу
+vs
+N listeners на ячейки
+= Memory efficient
+```
+
+### 5. **Semantic HTML (`<table>`)**
+```
+✅ SEO
+✅ Accessibility
+✅ Screen readers
+```
+
+### 6. **Web Workers для фильтрации**
+```
+Large dataset → Worker
+= No UI blocking
+```
+
+---
+
+## 🎯 Component Design Checklist
+
+**✅ Props Design:**
+- Generic types
+- Column descriptors
+- Custom render/update functions
+
+**✅ State Design:**
+- Internal state
+- DOM elements caching
+- Event listeners
+
+**✅ Performance:**
+- Pagination (constant nodes)
+- Reuse DOM
+- Event delegation
+- Web Workers
+
+**✅ Accessibility:**
+- Semantic `<table>`
+- Keyboard navigation
+- ARIA attributes
+- REMs
+
+**✅ Extensibility:**
+- CSS API
+- Custom renders
+- Inheritance
+
+---
+
+**Время выполнения:** ~45 минут  
+**Уровень:** Senior Frontend Engineer  
+**Компании:** Facebook, Amazon, Google
+
+Удачи на интервью! 📊🚀
